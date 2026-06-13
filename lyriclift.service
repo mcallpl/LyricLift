@@ -1,0 +1,14 @@
+[Unit]
+Description=LyricLift Flask Application
+After=network.target
+
+[Service]
+Type=notify
+User=www-data
+WorkingDirectory=/var/www/html/LyricLift
+ExecStart=/usr/bin/python3 -m gunicorn --workers 2 --worker-class sync --bind 127.0.0.1:5000 --timeout 600 app:app
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

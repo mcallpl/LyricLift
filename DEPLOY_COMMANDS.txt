@@ -1,0 +1,154 @@
+═══════════════════════════════════════════════════════════════════════════
+   LYRICLIFT DEPLOYMENT - COPY & PASTE COMMANDS
+═══════════════════════════════════════════════════════════════════════════
+
+⚠️  Make sure DNS A record is created before running Certbot:
+    lyriclift.peoplestar.com  A  64.227.108.128
+
+═══════════════════════════════════════════════════════════════════════════
+STEP 1: SSH INTO SERVER
+═══════════════════════════════════════════════════════════════════════════
+
+ssh root@64.227.108.128
+
+
+═══════════════════════════════════════════════════════════════════════════
+STEP 2: CREATE DIRECTORIES & PERMISSIONS (run on server)
+═══════════════════════════════════════════════════════════════════════════
+
+mkdir -p /var/www/html/LyricLift/tmp
+chmod 775 /var/www/html/LyricLift/tmp
+chown www-data:www-data /var/www/html/LyricLift -R
+chmod 755 /var/www/html/LyricLift
+
+
+═══════════════════════════════════════════════════════════════════════════
+STEP 3: INSTALL PYTHON DEPENDENCIES (run on server)
+═══════════════════════════════════════════════════════════════════════════
+
+pip3 install yt-dlp --break-system-packages
+pip3 install openai-whisper --break-system-packages
+
+
+═══════════════════════════════════════════════════════════════════════════
+STEP 4: DEPLOY APPLICATION FILES (run on LOCAL MACHINE)
+═══════════════════════════════════════════════════════════════════════════
+
+rsync -avz --delete --exclude='tmp/*' \
+  /Users/chipmcallister/Projects/LyricLift/ \
+  root@64.227.108.128:/var/www/html/LyricLift/
+
+
+═══════════════════════════════════════════════════════════════════════════
+STEP 5: SETUP NGINX & SSL (run on server)
+═══════════════════════════════════════════════════════════════════════════
+
+# Copy nginx configuration
+cp /var/www/html/LyricLift/lyriclift.conf /etc/nginx/sites-available/lyriclift
+
+# Create symlink to enable it
+ln -s /etc/nginx/sites-available/lyriclift /etc/nginx/sites-enabled/lyriclift
+
+# Test nginx configuration
+nginx -t
+
+# Reload nginx
+systemctl reload nginx
+
+# Setup SSL with Certbot (make sure DNS has propagated first!)
+certbot --nginx -d lyriclift.peoplestar.com --non-interactive --agree-tos -m mcallpl@gmail.com
+
+# Reload nginx again after Certbot updates it
+systemctl reload nginx
+
+
+═══════════════════════════════════════════════════════════════════════════
+VERIFY DEPLOYMENT (run on server)
+═══════════════════════════════════════════════════════════════════════════
+
+# Check all files are in place
+ls -la /var/www/html/LyricLift/
+
+# Test the site (should return 200 or redirect to HTTPS)
+curl -I https://lyriclift.peoplestar.com
+
+# Check nginx is running
+systemctl status nginx
+
+# Check PHP-FPM is running
+systemctl status php8.2-fpm
+
+# View Nginx error log if there are issues
+tail -f /var/log/nginx/lyriclift_error.log
+
+
+═══════════════════════════════════════════════════════════════════════════
+TROUBLESHOOTING
+═══════════════════════════════════════════════════════════════════════════
+
+# Fix permissions
+chmod 775 /var/www/html/LyricLift/tmp
+chown www-data:www-data /var/www/html/LyricLift/tmp
+
+# Reload Nginx
+systemctl reload nginx
+
+# Restart PHP-FPM
+systemctl restart php8.2-fpm
+
+# Check if php8.1 instead of 8.2
+ls /var/run/php/php8.1-fpm.sock
+# If it exists, update socket in lyriclift.conf and redeploy
+
+
+═══════════════════════════════════════════════════════════════════════════
+EXPECTED RESULT
+═══════════════════════════════════════════════════════════════════════════
+
+✅ https://lyriclift.peoplestar.com loads with the UI
+✅ File upload works
+✅ URL input accepts links
+✅ Extract button processes and returns transcription
+✅ Copy to clipboard works
+✅ Download file works
+✅ HTTPS certificate is valid (no browser warnings)
+
+
+═══════════════════════════════════════════════════════════════════════════
+OPTIONAL: WHITELIST CERTBOT AUTO-RENEWAL IN CRONTAB
+═══════════════════════════════════════════════════════════════════════════
+
+# Certbot auto-renewal should be in crontab already, but verify:
+crontab -l | grep certbot
+
+# If not present, add it:
+crontab -e
+# Add line: 0 12 * * * /usr/bin/certbot renew --quiet
+
+
+═══════════════════════════════════════════════════════════════════════════
+MONITORING AFTER DEPLOYMENT
+═══════════════════════════════════════════════════════════════════════════
+
+# Watch access log in real-time
+tail -f /var/log/nginx/lyriclift_access.log
+
+# Check tmp directory size
+du -sh /var/www/html/LyricLift/tmp
+
+# Monitor PHP-FPM
+systemctl status php8.2-fpm
+
+
+═══════════════════════════════════════════════════════════════════════════
+UPDATING THE APP LATER
+═══════════════════════════════════════════════════════════════════════════
+
+# To push updates from your local machine:
+rsync -avz --exclude='tmp/*' \
+  /Users/chipmcallister/Projects/LyricLift/ \
+  root@64.227.108.128:/var/www/html/LyricLift/
+
+systemctl reload nginx
+
+═══════════════════════════════════════════════════════════════════════════
