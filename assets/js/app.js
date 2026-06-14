@@ -17,6 +17,26 @@ let currentJobId = null;
 let currentFileName = null;
 let droppedFile = null;
 
+const allowedExtensions = ['mp3', 'mp4', 'm4a', 'wav', 'mov', 'webm'];
+const allowedMimeTypes = [
+    'audio/mpeg',
+    'audio/mp3',
+    'audio/mp4',
+    'audio/m4a',
+    'audio/x-m4a',
+    'audio/wav',
+    'audio/x-wav',
+    'audio/wave',
+    'video/mp4',
+    'video/quicktime',
+    'video/webm'
+];
+
+function isValidMediaFile(file) {
+    const extension = file.name.split('.').pop().toLowerCase();
+    return allowedExtensions.includes(extension) || allowedMimeTypes.includes(file.type);
+}
+
 // Dropzone handling
 dropzone.addEventListener('click', () => fileInput.click());
 
@@ -43,9 +63,12 @@ function handleFileSelect(files) {
     if (files.length === 0) return;
 
     const file = files[0];
-    const validTypes = ['audio/mpeg', 'audio/mp4', 'audio/m4a', 'audio/wav', 'video/mp4', 'video/quicktime', 'video/webm'];
 
-    if (!validTypes.includes(file.type)) {
+    if (!isValidMediaFile(file)) {
+        droppedFile = null;
+        fileInput.value = '';
+        fileName.textContent = '';
+        fileName.style.display = 'none';
         showError('Invalid file type. Please upload: MP3, MP4, M4A, WAV, MOV, or WEBM');
         return;
     }
