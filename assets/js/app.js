@@ -16,6 +16,7 @@ const backBtn = document.getElementById('backBtn');
 let currentJobId = null;
 let currentFileName = null;
 let droppedFile = null;
+let statusPollTimer = null;
 
 const allowedExtensions = ['mp3', 'mp4', 'm4a', 'wav', 'mov', 'webm'];
 const allowedMimeTypes = [
@@ -35,6 +36,73 @@ const allowedMimeTypes = [
 function isValidMediaFile(file) {
     const extension = file.name.split('.').pop().toLowerCase();
     return allowedExtensions.includes(extension) || allowedMimeTypes.includes(file.type);
+}
+
+function stripHtml(text) {
+    return text
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function describeHttpError(response, bodyText) {
+    if (response.status === 502 || response.status === 503 || response.status === 504) {
+        return 'The server stopped responding while processing. Your file may be too long for the current server capacity.';
+    }
+
+    const summary = stripHtml(bodyText).slice(0, 220);
+    if (summary) {
+        return `Server returned HTTP ${response.status}: ${summary}`;
+    }
+
+    return `Server returned HTTP ${response.status}. Please try again.`;
+}
+
+async function readJsonResponse(response) {
+    const bodyText = await response.text();
+
+    try {
+        const data = bodyText ? JSON.parse(bodyText) : {};
+        if (!response.ok && !data.error) {
+            throw new Error(describeHttpError(response, bodyText));
+        }
+        return data;
+    } catch (error) {
+        if (error instanceof SyntaxError) {
+            throw new Error(describeHttpError(response, bodyText));
+        }
+        throw error;
+    }
+}
+
+function setProcessing(isProcessing) {
+    extractBtn.disabled = isProcessing;
+    extractBtn.textContent = isProcessing ? 'Processing...' : 'Extract Words';
+}
+
+function clearStatusPoll() {
+    if (statusPollTimer) {
+        clearTimeout(statusPollTimer);
+        statusPollTimer = null;
+    }
+}
+
+function updateLoadingMessage(status, message) {
+    if (message) {
+        loadingMessage.textContent = message;
+        return;
+    }
+
+    const messages = {
+        queued: 'Queued for processing...',
+        downloading: 'Downloading audio...',
+        processing: 'Processing...',
+        transcribing: 'Transcribing audio...'
+    };
+
+    loadingMessage.textContent = messages[status] || 'Processing...';
 }
 
 // Dropzone handling
@@ -109,7 +177,8 @@ extractBtn.addEventListener('click', () => {
 });
 
 async function extract(url, file, format) {
-    showLoading();
+    clearStatusPoll();
+    showLoading('Starting extraction...');
 
     const formData = new FormData();
     if (url) {
@@ -125,54 +194,79 @@ async function extract(url, file, format) {
             body: formData
         });
 
-        const data = await response.json();
+        const data = await readJsonResponse(response);
 
-        if (data.success) {
-            currentJobId = 'transcription';
-            currentFileName = data.filename;
-            resultsTextarea.value = data.text;
-            showResults();
+        if (data.jobId && data.status === 'processing') {
+            currentJobId = data.jobId;
+            updateLoadingMessage(data.status, data.message);
+            pollJobStatus(data.jobId);
+        } else if (data.success && data.text) {
+            showCompletedResult(data);
         } else {
             showError(data.error || 'Processing failed');
         }
     } catch (error) {
-        showError('Error: ' + error.message);
+        showError(error.message);
     }
 }
 
-function startLoadingMessageCycle() {
-    let index = 0;
-    const interval = setInterval(() => {
-        if (!loadingState.classList.contains('hidden')) {
-            loadingMessage.textContent = loadingMessages[index % loadingMessages.length];
-            index++;
-        } else {
-            clearInterval(interval);
+function pollJobStatus(jobId, attempt = 0) {
+    const maxAttempts = 720; // one hour at five-second intervals
+
+    statusPollTimer = setTimeout(async () => {
+        try {
+            const response = await fetch(`/status/${encodeURIComponent(jobId)}?t=${Date.now()}`);
+            const data = await readJsonResponse(response);
+
+            if (data.status === 'done' && data.success) {
+                showCompletedResult(data);
+                return;
+            }
+
+            if (data.status === 'error' || data.success === false) {
+                showError(data.error || 'Processing failed');
+                return;
+            }
+
+            if (attempt >= maxAttempts) {
+                showError('Processing is taking longer than expected. Please try a shorter file or split the recording into smaller parts.');
+                return;
+            }
+
+            updateLoadingMessage(data.status, data.message);
+            pollJobStatus(jobId, attempt + 1);
+        } catch (error) {
+            showError(`Error checking processing status: ${error.message}`);
         }
-    }, 2000);
+    }, attempt === 0 ? 1000 : 5000);
 }
 
-function showLoading() {
+function showCompletedResult(data) {
+    currentFileName = data.filename;
+    resultsTextarea.value = data.text;
+    showResults();
+}
+
+function showLoading(message) {
     hideAllStates();
+    if (message) {
+        loadingMessage.textContent = message;
+    }
+    setProcessing(true);
     loadingState.classList.remove('hidden');
 }
 
 function showResults() {
+    clearStatusPoll();
     hideAllStates();
+    setProcessing(false);
     resultsSection.classList.remove('hidden');
-
-    // Ask if user wants to delete the temporary file (only for file uploads)
-    if (droppedFile && currentJobId) {
-        setTimeout(() => {
-            if (confirm(`Delete the temporary processing file?\n\n(Your original file is safe on your computer)`)) {
-                deleteTemporaryFile(currentJobId);
-            }
-        }, 500);
-    }
 }
 
 function showError(msg) {
+    clearStatusPoll();
     hideAllStates();
+    setProcessing(false);
     errorMessage.textContent = msg;
     errorState.classList.remove('hidden');
 }
@@ -195,17 +289,20 @@ copyBtn.addEventListener('click', () => {
 });
 
 downloadBtn.addEventListener('click', () => {
-    if (!currentFileName) {
+    if (!currentFileName || !resultsTextarea.value) {
         showError('No file available to download');
         return;
     }
 
+    const blob = new Blob([resultsTextarea.value], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = `download.php?file=${encodeURIComponent(currentFileName)}&job=${encodeURIComponent(currentJobId)}`;
+    link.href = url;
     link.download = currentFileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
 });
 
 async function deleteTemporaryFile(jobId) {
@@ -218,6 +315,8 @@ async function deleteTemporaryFile(jobId) {
         const result = await response.json();
         if (result.success) {
             console.log('Temporary file deleted');
+        } else {
+            console.error('Error deleting temporary file:', result.error || response.statusText);
         }
     } catch (error) {
         console.error('Error deleting temporary file:', error);
@@ -225,11 +324,15 @@ async function deleteTemporaryFile(jobId) {
 }
 
 backBtn.addEventListener('click', () => {
+    clearStatusPoll();
     urlInput.value = '';
     fileInput.value = '';
     fileName.textContent = '';
     fileName.style.display = 'none';
     resultsTextarea.value = '';
+    currentJobId = null;
+    currentFileName = null;
     droppedFile = null;
+    setProcessing(false);
     hideAllStates();
 });

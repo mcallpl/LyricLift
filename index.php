@@ -89,6 +89,6 @@
         </main>
     </div>
 
-    <script src="assets/js/app.js?v=20260614-m4a"></script>
+    <script src="assets/js/app.js?v=20260614-async-jobs"></script>
 </body>
 </html>
