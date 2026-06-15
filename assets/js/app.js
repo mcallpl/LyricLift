@@ -211,7 +211,7 @@ async function extract(url, file, format) {
 }
 
 function pollJobStatus(jobId, attempt = 0) {
-    const maxAttempts = 720; // one hour at five-second intervals
+    const maxAttempts = 8640; // twelve hours at five-second intervals
 
     statusPollTimer = setTimeout(async () => {
         try {
@@ -229,7 +229,7 @@ function pollJobStatus(jobId, attempt = 0) {
             }
 
             if (attempt >= maxAttempts) {
-                showError('Processing is taking longer than expected. Please try a shorter file or split the recording into smaller parts.');
+                showError('Processing is taking longer than expected. Please check back later or try splitting the recording into smaller parts.');
                 return;
             }
 

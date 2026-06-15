@@ -11,7 +11,9 @@ from datetime import datetime, timezone
 
 app = Flask(__name__, static_folder='assets', static_url_path='/assets')
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
-PROCESSING_TIMEOUT_SECONDS = 3600
+# Long recordings can take hours on the small CPU-only production server.
+# A value of 0 disables the Whisper subprocess timeout.
+PROCESSING_TIMEOUT_SECONDS = int(os.environ.get('LYRICLIFT_PROCESSING_TIMEOUT_SECONDS', '0'))
 JOB_TTL_SECONDS = 6 * 60 * 60
 
 app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_BYTES
@@ -62,6 +64,9 @@ def cleanup_old_jobs():
         path = os.path.join(app.config['UPLOAD_FOLDER'], name)
         if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
             remove_if_exists(path)
+
+def whisper_timeout():
+    return PROCESSING_TIMEOUT_SECONDS if PROCESSING_TIMEOUT_SECONDS > 0 else None
 
 def run_transcription_job(job_id, audio_path, url, format_type):
     output_format = 'srt' if format_type == 'srt' else 'txt'
@@ -117,7 +122,7 @@ def run_transcription_job(job_id, audio_path, url, format_type):
             job_id,
             success=True,
             status='transcribing',
-            message='Transcribing audio...'
+            message='Transcribing audio... Long recordings can take a while on this server.'
         )
 
         env = os.environ.copy()
@@ -138,7 +143,7 @@ def run_transcription_job(job_id, audio_path, url, format_type):
             whisper_cmd,
             capture_output=True,
             text=True,
-            timeout=PROCESSING_TIMEOUT_SECONDS,
+            timeout=whisper_timeout(),
             env=env
         )
 
@@ -176,11 +181,12 @@ def run_transcription_job(job_id, audio_path, url, format_type):
         )
 
     except subprocess.TimeoutExpired:
+        timeout_minutes = max(1, PROCESSING_TIMEOUT_SECONDS // 60)
         write_job_status(
             job_id,
             success=False,
             status='error',
-            error='Processing timeout. This file took too long to transcribe.'
+            error=f'Processing timeout after {timeout_minutes} minutes. This file took too long to transcribe.'
         )
     except Exception as e:
         print(f"Exception in job {job_id}: {str(e)}")
