@@ -4,6 +4,28 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LyricLift - Extract Lyrics & Transcripts</title>
+    <meta name="description" content="Extract lyrics, captions, and transcripts from any video or audio file. Supports YouTube, Facebook, Instagram, Vimeo, and direct file uploads.">
+    <meta name="keywords" content="lyrics extraction, transcription, audio extraction, video transcription">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="assets/images/favicon.ico">
+    <link rel="apple-touch-icon" href="assets/images/favicon.png">
+
+    <!-- Open Graph / Social Media Tags -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://lyriclift.com">
+    <meta property="og:title" content="LyricLift - Extract Lyrics & Transcripts">
+    <meta property="og:description" content="Extract lyrics, captions, and transcripts from any video or audio file instantly.">
+    <meta property="og:image" content="https://lyriclift.com/assets/images/social-preview.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+
+    <!-- Twitter Card Tags -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="LyricLift - Extract Lyrics & Transcripts">
+    <meta name="twitter:description" content="Extract lyrics, captions, and transcripts from any video or audio file instantly.">
+    <meta name="twitter:image" content="https://lyriclift.com/assets/images/social-preview.png">
+
     <link rel="stylesheet" href="assets/css/style.css">
 </head>
 <body>
