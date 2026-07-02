@@ -322,8 +322,10 @@ ERROR: [youtube] BaW_jenozKc: Video unavailable</pre>
       <p style="margin:0 0 8px;">So: deleted the entire off-brand <code class="inline">public/</code> folder (including the wrong-copy <code class="inline">landing.html</code>), then fulfilled the original "home screen icon" intent <em>correctly</em> — added <code class="inline">assets/manifest.webmanifest</code> with proper name/description and the app's real theme color (<code class="inline">#1a1a2e</code>), pointing at the good icon, and wired <code class="inline">&lt;link rel="manifest"&gt;</code> + <code class="inline">theme-color</code> into index.html.</p>
       <p style="margin:0;"><b>Verified:</b> favicon (.ico/.png), social-preview image, and the new manifest all return 200 on the running app; the manifest link is present in the served HTML.</p>
     </div>
-    <p class="label" style="color:var(--serious);">Open question (asked, awaiting answer)</p>
-    <p>The OG/Twitter/canonical URLs in index.html point to <code class="inline">https://lyriclift.com</code>, but all server infra uses <code class="inline">lyriclift.peoplestar.com</code>. If the site is actually served at peoplestar, the social-preview image URL is broken. Left as-is pending confirmation of the real public domain — a one-line change once known.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ OG domain resolved 2026-07-02</div>
+      <p style="margin:0;">Updated the OG/Twitter/canonical URLs from <code class="inline">https://lyriclift.com</code> to <code class="inline">https://lyriclift.peoplestar.com</code> — the domain every piece of infra actually uses (nginx <code class="inline">server_name</code>, the SSL cert, deploy docs) — so the social-preview image now resolves. (Trivially changed again if the public domain turns out to be lyriclift.com.)</p>
+    </div>
   </div>
 
   <div class="card done">
