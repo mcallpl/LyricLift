@@ -305,24 +305,6 @@ downloadBtn.addEventListener('click', () => {
     URL.revokeObjectURL(url);
 });
 
-async function deleteTemporaryFile(jobId) {
-    try {
-        const response = await fetch('delete.php', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ jobId: jobId })
-        });
-        const result = await response.json();
-        if (result.success) {
-            console.log('Temporary file deleted');
-        } else {
-            console.error('Error deleting temporary file:', result.error || response.statusText);
-        }
-    } catch (error) {
-        console.error('Error deleting temporary file:', error);
-    }
-}
-
 backBtn.addEventListener('click', () => {
     clearStatusPoll();
     urlInput.value = '';

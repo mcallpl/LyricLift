@@ -1,0 +1,17 @@
+{
+  "name": "LyricLift",
+  "short_name": "LyricLift",
+  "description": "Extract lyrics, captions, and transcripts from any video or audio.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1a2e",
+  "theme_color": "#1a1a2e",
+  "icons": [
+    {
+      "src": "/assets/images/favicon.png",
+      "sizes": "256x256",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

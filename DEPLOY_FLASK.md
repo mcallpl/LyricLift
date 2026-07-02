@@ -13,17 +13,39 @@ ssh root@64.227.108.128
 rsync -avz --delete --exclude='tmp/*' /Users/chipmcallister/Projects/LyricLift/ root@64.227.108.128:/var/www/html/LyricLift/
 ```
 
-### Step 3: Install Python Dependencies
+### Step 3: Install Dependencies
 ```bash
 # On the server
 cd /var/www/html/LyricLift
 pip3 install -r requirements.txt --break-system-packages
+# Processing tools (not pinned in requirements.txt):
+pip3 install yt-dlp openai-whisper --break-system-packages
+apt install -y ffmpeg
+
+# JS runtime for yt-dlp — REQUIRED for YouTube (solves player challenges).
+# Prefer apt's nodejs: it installs to /usr/bin, so it's on the www-data PATH the
+# gunicorn service uses. (deno works too but its installer drops it in a user dir
+# that www-data can't see unless you add it to the service PATH.)
+apt install -y nodejs
+# The app auto-detects deno/node/bun; override with LYRICLIFT_JS_RUNTIME if needed.
 ```
 
-### Step 4: Stop Old PHP Server
+### Step 3b: Pre-bake the Whisper model (recommended)
 ```bash
-# Kill any old PHP processes for LyricLift
-pkill -f "php.*extract.php"
+# Avoids a fragile at-request-time download (the old SSL-failure source).
+mkdir -p /var/www/html/LyricLift/.cache/whisper
+# Copy tiny.pt from a machine that already has it, e.g.:
+#   rsync -avz ~/.cache/whisper/tiny.pt \
+#     root@SERVER:/var/www/html/LyricLift/.cache/whisper/
+# The app will otherwise download it on first run (needs working CA certs).
+```
+
+### Step 4: Retire the old PHP config (one-time migration)
+```bash
+# The PHP backend has been removed. If this box previously ran the PHP version,
+# drop its old nginx site so it can't shadow the Flask one:
+rm -f /etc/nginx/sites-enabled/lyriclift /etc/nginx/sites-available/lyriclift
+pkill -f "php.*extract.php" 2>/dev/null || true
 ```
 
 ### Step 5: Setup Directories
@@ -48,11 +70,9 @@ systemctl status lyriclift
 
 ### Step 7: Update Nginx Configuration
 ```bash
-# On the server
+# On the server — install the Flask vhost and enable it.
 cp /var/www/html/LyricLift/lyriclift-flask.conf /etc/nginx/sites-available/lyriclift
-# Replace old config
-rm /etc/nginx/sites-available/lyriclift  # Old PHP version
-ln -s /etc/nginx/sites-available/lyriclift.php /etc/nginx/sites-enabled/lyriclift
+ln -sf /etc/nginx/sites-available/lyriclift /etc/nginx/sites-enabled/lyriclift
 
 # Test and reload
 nginx -t
