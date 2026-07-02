@@ -5,6 +5,10 @@ tmp/*
 # Whisper model cache / other caches
 .cache/
 
+# yt-dlp cookies (a logged-in session export — never commit)
+youtube_cookies.txt
+*cookies*.txt
+
 # Python
 __pycache__/
 *.py[cod]

@@ -28,6 +28,16 @@ WHISPER_MODEL_URLS = {
 # Where the app keeps caches (Whisper model, etc.), next to app.py.
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.cache')
 
+# Optional cookies file for yt-dlp. Cloud/VPS IPs are frequently blocked by
+# YouTube's bot check ("Sign in to confirm you're not a bot" / HTTP 429);
+# supplying cookies exported from a logged-in session is the standard workaround.
+# Drop a Netscape-format cookies.txt at this path (or set LYRICLIFT_YTDLP_COOKIES)
+# and it's used automatically. If the file is absent, downloads run without it.
+YTDLP_COOKIES_FILE = os.environ.get(
+    'LYRICLIFT_YTDLP_COOKIES',
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'youtube_cookies.txt')
+)
+
 app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_BYTES
 app.config['UPLOAD_FOLDER'] = 'tmp'
 
@@ -238,6 +248,9 @@ def run_transcription_job(job_id, audio_path, url, format_type):
             js_runtime = detect_js_runtime()
             if js_runtime:
                 download_cmd += ['--js-runtimes', js_runtime]
+            cookies_used = os.path.exists(YTDLP_COOKIES_FILE)
+            if cookies_used:
+                download_cmd += ['--cookies', YTDLP_COOKIES_FILE]
             download_cmd.append(url)
             result = subprocess.run(
                 download_cmd,
@@ -247,14 +260,23 @@ def run_transcription_job(job_id, audio_path, url, format_type):
             )
 
             if result.returncode != 0 or not os.path.exists(audio_path) or os.path.getsize(audio_path) == 0:
+                stderr = result.stderr or ''
+                bot_blocked = any(s in stderr for s in (
+                    'Sign in to confirm', "not a bot", 'HTTP Error 429',
+                    '429: Too Many Requests', 'confirm your age'))
                 if not js_runtime:
                     error_msg = ('Failed to download audio. No JavaScript runtime '
                                  '(deno/node) is installed, which YouTube now requires. '
                                  'Install one on the server, or check the URL and try again.')
+                elif bot_blocked and not cookies_used:
+                    error_msg = ('This site blocked the download from our server '
+                                 '(bot check / rate limit). YouTube often blocks cloud '
+                                 'servers — please upload the audio/video file directly '
+                                 'instead.')
                 else:
                     error_msg = 'Failed to download audio. Check the URL and try again.'
-                print(f"yt-dlp failed for {job_id} (js_runtime={js_runtime}) "
-                      f"rc={result.returncode}: {result.stderr[:500]}")
+                print(f"yt-dlp failed for {job_id} (js_runtime={js_runtime}, "
+                      f"cookies={cookies_used}) rc={result.returncode}: {stderr[:500]}")
                 write_job_status(
                     job_id,
                     success=False,

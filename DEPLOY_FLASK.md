@@ -40,6 +40,21 @@ mkdir -p /var/www/html/LyricLift/.cache/whisper
 # The app will otherwise download it on first run (needs working CA certs).
 ```
 
+### Step 3c: (Optional) YouTube cookies — needed for YouTube on a cloud server
+```bash
+# YouTube blocks datacenter/VPS IPs with a bot check ("Sign in to confirm you're
+# not a bot" / HTTP 429). File uploads and most other sites are unaffected, but
+# YouTube URLs need cookies from a logged-in session to work from the server.
+#
+# 1. In a logged-in browser, export cookies for youtube.com in Netscape format
+#    (e.g. a "Get cookies.txt" extension).
+# 2. Save the file on the server as:
+#      /var/www/html/LyricLift/youtube_cookies.txt   (chown www-data)
+#    (or set LYRICLIFT_YTDLP_COOKIES=/path/to/cookies.txt in the service.)
+# The app auto-detects the file and passes --cookies to yt-dlp. Cookies expire,
+# so they need periodic refresh. Consider a residential proxy for a hands-off fix.
+```
+
 ### Step 4: Retire the old PHP config (one-time migration)
 ```bash
 # The PHP backend has been removed. If this box previously ran the PHP version,
