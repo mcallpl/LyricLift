@@ -12,42 +12,43 @@ A clean, simple web app that extracts spoken words and lyrics from any video or 
 - **With Timestamps (SRT)** - Standard SubRip format with timing information
 - **Plain Text** - Clean text transcription without timestamps
 
-⚡ **Lightning-Fast Processing**
+⚡ **Background Processing**
 - Uses OpenAI Whisper (tiny model) for accurate transcription
 - Automatic audio download and extraction via yt-dlp
-- Processing typically completes in 1-5 minutes depending on file length
+- Jobs run asynchronously; the browser polls for status while processing
 
 💾 **Easy Export**
 - Copy to clipboard with one click
-- Download as .srt or .txt file
-- Clean, readable formatting
+- Download the result as an .srt or .txt file (generated client-side from the returned text)
 
 🔒 **Privacy-Focused**
 - Stateless processing - no database
-- Automatic cleanup of temporary files after 1 hour
+- Automatic cleanup of temporary files
 - All processing happens on your server
 
 ## Tech Stack
 
-- **Frontend**: Vanilla JavaScript, HTML5, CSS3
-- **Backend**: PHP 8+
+- **Frontend**: Vanilla JavaScript, HTML5, CSS3 (`index.html` + `assets/`)
+- **Backend**: Python 3 + Flask (`app.py`), served by gunicorn behind nginx
 - **Audio Processing**: yt-dlp (for URL downloads) + OpenAI Whisper (for transcription)
-- **Server**: Nginx + PHP-FPM
-- **No Database**: Completely stateless
+- **JS runtime**: deno or node (required by yt-dlp for modern YouTube extraction)
+- **No Database**: Completely stateless; job state is small JSON files in `tmp/`
 
 ## Project Structure
 
 ```
 LyricLift/
-├── index.php              # Main UI
-├── extract.php            # Backend processor (yt-dlp + Whisper)
-├── download.php           # File download handler
-├── tmp/                   # Temporary storage (auto-cleanup)
+├── app.py                 # Flask backend (routes, yt-dlp + Whisper orchestration)
+├── index.html             # Main UI (served by Flask at /)
 ├── assets/
 │   ├── css/style.css      # Styling
-│   └── js/app.js          # Frontend logic
-├── lyriclift.conf         # Nginx configuration
-├── DEPLOYMENT.md          # Deployment guide
+│   ├── js/app.js          # Frontend logic
+│   └── images/            # Favicon + social preview referenced by index.html
+├── tmp/                   # Temporary storage for uploads + job status (auto-cleanup)
+├── requirements.txt       # Python dependencies
+├── lyriclift-flask.conf   # Nginx configuration (proxies to Flask on :5000)
+├── lyriclift.service      # systemd unit (gunicorn)
+├── DEPLOY_FLASK.md        # Deployment guide
 └── README.md              # This file
 ```
 
@@ -57,74 +58,87 @@ LyricLift/
 
 ```bash
 cd /Users/chipmcallister/Projects/LyricLift
-php -S localhost:8000
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+pip install yt-dlp openai-whisper   # processing tools (not in requirements.txt)
+python app.py
 ```
 
-Open http://localhost:8000 in your browser.
+Open http://127.0.0.1:5000 in your browser.
+
+> **YouTube note:** yt-dlp needs a JavaScript runtime to solve YouTube's player
+> challenges. Install `deno` (recommended) or `node` and make sure it is on the
+> PATH of the process running `app.py`. The app auto-detects deno → node → bun,
+> or you can force one with `LYRICLIFT_JS_RUNTIME=deno`.
 
 ### Requirements
 
-- PHP 8.0+ with `shell_exec` enabled
-- Python 3.7+
-- yt-dlp (installed: `pip3 install yt-dlp`)
-- OpenAI Whisper (installed: `pip3 install openai-whisper`)
-- Writable tmp/ directory (775 permissions)
+- Python 3.8+
+- Flask + Werkzeug + gunicorn (`pip install -r requirements.txt`)
+- yt-dlp (`pip install yt-dlp`)
+- OpenAI Whisper (`pip install openai-whisper`)
+- ffmpeg (used by yt-dlp/Whisper for audio extraction)
+- A JS runtime on PATH: `deno`, `node`, or `bun`
+- Writable `tmp/` directory
 
 ## How It Works
 
-1. **URL Processing**: When a URL is provided, `extract.php` uses `yt-dlp` to download the audio
-2. **File Upload**: Uploaded files are moved to the temporary directory with a unique job ID
-3. **Transcription**: Whisper processes the audio with:
+1. **Submit** — the browser POSTs a URL or file to `/extract`. Flask validates it,
+   creates a job ID, writes an initial status file, and starts a background thread,
+   returning `202 { jobId, status: "processing" }` immediately.
+2. **URL download** — if a URL was given, `yt-dlp` downloads the audio (m4a),
+   passing `--js-runtimes <detected runtime>` so YouTube extraction works.
+3. **Transcription** — Whisper processes the audio:
    - Model: `tiny` (lightweight, fast)
    - Language: English
    - Output format: SRT (with timestamps) or TXT (plain text)
-4. **Response**: Results returned as JSON with formatted text
-5. **Cleanup**: Temporary files older than 1 hour are automatically deleted
+4. **Polling** — the browser polls `GET /status/<jobId>` every few seconds. Each
+   response reports `queued` / `downloading` / `transcribing` / `done` / `error`.
+5. **Result** — on `done`, the status payload includes the transcribed `text` and a
+   suggested `filename`. The UI shows the text and offers copy/download.
+6. **Cleanup** — the source audio and Whisper output for a job are deleted as soon
+   as the job finishes; leftover job files are swept after their TTL.
 
 ## Configuration
 
-### PHP Settings (in extract.php)
+Environment variables (all optional):
 
-```php
-ini_set('max_execution_time', 300);    // 5 minutes
-ini_set('memory_limit', '256M');       // Max memory
-```
+| Variable | Default | Purpose |
+|---|---|---|
+| `LYRICLIFT_PROCESSING_TIMEOUT_SECONDS` | `0` (no timeout) | Max seconds for the Whisper subprocess |
+| `LYRICLIFT_JS_RUNTIME` | auto-detect | Force a specific yt-dlp JS runtime (`deno`/`node`/`bun`) |
+
+Limits (in `app.py`):
+
+- **Max upload size**: 100MB (`MAX_UPLOAD_BYTES`)
+- **Job TTL**: 6 hours (`JOB_TTL_SECONDS`)
 
 ### Whisper Command
 
 ```bash
-PYTHONHTTPSVERIFY=0 python3 -m whisper \
+XDG_CACHE_HOME=<cache> python3 -m whisper <audio> \
   --model tiny \
   --language English \
-  --output_format srt|txt
+  --output_format srt|txt \
+  --device cpu \
+  --no_speech_threshold 0.1
 ```
 
 ### Nginx Limits
 
 - **Max upload size**: 100MB (`client_max_body_size 100M`)
-- **PHP-FPM timeout**: 300 seconds (`fastcgi_read_timeout 300`)
-- **Socket**: `/var/run/php/php8.2-fpm.sock` (adjust for your version)
+- **Proxy timeout**: 600 seconds (`proxy_read_timeout`)
+- **Upstream**: Flask/gunicorn on `127.0.0.1:5000`
 
 ## Supported Input Formats
 
 ### URLs
-- YouTube
-- Facebook
-- Instagram
-- Vimeo
-- TikTok
-- Twitter/X
-- Twitch
-- Dailymotion
-- And 1000+ other sites supported by yt-dlp
+- YouTube, Facebook, Instagram, Vimeo, TikTok, Twitter/X, Twitch, Dailymotion,
+  and the 1000+ other sites supported by yt-dlp.
 
 ### File Uploads
-- MP3 (`.mp3`)
-- MP4 (`.mp4`)
-- M4A (`.m4a`)
-- WAV (`.wav`)
-- MOV (`.mov`)
-- WebM (`.webm`)
+- MP3, MP4, M4A, WAV, MOV, WebM
 
 ## Output Formats
 
@@ -148,137 +162,77 @@ More text continues here
 
 ## Error Handling
 
-The app handles common errors gracefully:
+The app returns clear JSON errors for common cases:
 
-- Invalid URLs → "Failed to download audio. Please check the URL and try again."
-- Unsupported file types → "Invalid file type. Supported: MP3, MP4, M4A, WAV, MOV, WEBM"
-- File too large → "File too large. Maximum size: 1GB"
-- Transcription failed → "Transcription failed. Please try again or upload a different file."
+- No input → "No URL or file provided"
+- Invalid URL → "Invalid URL"
+- Unsupported file type → "Invalid file type. Supported: MP3, MP4, M4A, WAV, MOV, WEBM"
+- File too large → "File too large. Maximum 100MB."
+- Download failure → "Failed to download audio…" (mentions the missing JS runtime if that's the cause)
+- No speech → "No speech detected in audio."
 
-Users always get clear feedback.
+## API
 
-## Security
+### `POST /extract`
 
-- ✅ File upload validation (extension and size checks)
-- ✅ Command injection prevention (proper escaping with `escapeshellarg()`)
-- ✅ Nginx prevents direct access to tmp/ directory
-- ✅ Automatic cleanup of old files
-- ✅ No database queries (no SQL injection risk)
-- ✅ HTTPS enforced via Certbot after deployment
+Form data:
+- `url` (optional): a video/audio URL
+- `file` (optional): an uploaded audio/video file
+- `format` (required): `"srt"` or `"txt"`
 
-## Performance
+Provide **either** a URL or a file, not both.
 
-**Processing Time Estimates** (Tiny Model on CPU):
-- 1 minute audio → ~30-60 seconds
-- 5 minutes audio → ~2-3 minutes
-- 30 minutes audio → ~10-15 minutes
-- 1 hour audio → ~20-30 minutes
+Response (`202`):
+```json
+{ "success": true, "status": "processing", "jobId": "job_20260701123045_abcdef0123" }
+```
 
-Times vary by server CPU. GPU would be 5-10x faster if available.
+### `GET /status/<jobId>`
+
+Returns the current job state:
+```json
+{ "status": "done", "success": true, "text": "…", "filename": "transcription_….srt" }
+```
+`status` is one of `queued`, `downloading`, `transcribing`, `done`, `error`.
+
+There is no server-side download endpoint: the transcription `text` is returned
+in the `/status` payload, and the browser saves it to a file client-side.
 
 ## Deployment
 
-See `DEPLOYMENT.md` for complete server setup instructions including:
-- SSH into empire-command
-- Install dependencies
-- Deploy files
-- Configure Nginx
-- Set up SSL with Certbot
+See **`DEPLOY_FLASK.md`** for full server setup (systemd + gunicorn + nginx + SSL).
 
-Quick summary:
+Quick update after a code change:
 ```bash
-# From your local machine
-rsync -avz --exclude='tmp/*' \
+rsync -avz --exclude='tmp/*' --exclude='.cache/*' \
   /Users/chipmcallister/Projects/LyricLift/ \
   root@64.227.108.128:/var/www/html/LyricLift/
-
-# On the server
-ssh root@64.227.108.128
-cp /var/www/html/LyricLift/lyriclift.conf /etc/nginx/sites-available/lyriclift
-ln -s /etc/nginx/sites-available/lyriclift /etc/nginx/sites-enabled/lyriclift
-nginx -t
-systemctl reload nginx
-certbot --nginx -d lyriclift.peoplestar.com --non-interactive --agree-tos -m mcallpl@gmail.com
-systemctl reload nginx
+ssh root@64.227.108.128 systemctl restart lyriclift
 ```
 
 ## Troubleshooting
 
-### Whisper SSL Error
+### YouTube returns "Video unavailable" / download fails
+Install a JS runtime on the server and ensure it's on the service PATH:
 ```bash
-# Set in extract.php (already done)
-PYTHONHTTPSVERIFY=0
+curl -fsSL https://deno.land/install.sh | sh   # or: apt install nodejs
 ```
 
-### Permission Denied on tmp/
-```bash
-chmod 775 /var/www/html/LyricLift/tmp
-chown www-data:www-data /var/www/html/LyricLift/tmp
-```
+### Whisper model download fails with an SSL error
+Pre-bake the model into the deploy (`~/.cache/whisper/tiny.pt` or the app's
+`.cache/whisper/`) so it never has to download at runtime, or fix the system CA
+bundle. Do **not** rely on `PYTHONHTTPSVERIFY=0` — it does not reliably bypass
+the error.
 
-### PHP-FPM 502 Bad Gateway
-- Check `systemctl status php8.2-fpm`
-- Verify socket path in nginx config
-- Check `/var/log/nginx/lyriclift_error.log`
-
-### Long Transcriptions Timeout
-- Increase `fastcgi_read_timeout` in nginx (currently 300 seconds)
-- Ensure sufficient free disk space in tmp/
-
-## API
-
-### extract.php
-
-**Request (POST)**
-```
-Form data:
-- url (optional): YouTube/Vimeo/etc URL
-- file (optional): Uploaded audio/video file
-- format (required): "srt" or "txt"
-```
-
-**Response (JSON)**
-```json
-{
-  "success": true,
-  "jobId": "job_666c1a1d45e7e_a1b2c3d4",
-  "filename": "transcription_2026-06-12_10-30-45.srt",
-  "text": "Transcribed text here..."
-}
-```
-
-### download.php
-
-**Request (GET)**
-```
-?file=transcription_2026-06-12_10-30-45.srt&job=job_666c1a1d45e7e_a1b2c3d4
-```
-
-Returns the transcription file for download.
-
-## Browser Support
-
-- Chrome/Edge 90+
-- Firefox 88+
-- Safari 14+
-- Mobile browsers (iOS Safari, Chrome Mobile)
-
-## License
-
-Built for personal use. Modify as needed.
+### 502 Bad Gateway from nginx
+- Check the service: `systemctl status lyriclift`
+- Confirm gunicorn is listening: `netstat -tlnp | grep 5000`
+- Check logs: `journalctl -u lyriclift -n 50`
 
 ## Credits
 
 Built with:
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) - Media download
 - [OpenAI Whisper](https://github.com/openai/whisper) - Audio transcription
-- Vanilla JavaScript - No frameworks
-- PHP - Server-side processing
-
-## Support
-
-For issues or questions:
-1. Check `DEPLOYMENT.md` troubleshooting section
-2. Review nginx/PHP logs
-3. Test yt-dlp and Whisper independently
-4. Verify all dependencies are installed
+- Flask - Backend
+- Vanilla JavaScript - No frontend frameworks

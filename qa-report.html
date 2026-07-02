@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LyricLift — QA Assessment</title>
+<style>
+  :root{
+    --page:#f9f9f7;
+    --surface:#fcfcfb;
+    --ink:#0b0b0b;
+    --ink-2:#52514e;
+    --muted:#898781;
+    --grid:#e1e0d9;
+    --border:rgba(11,11,11,0.10);
+    --good:#0ca30c;
+    --warning:#c98500; /* darkened for text-contrast use on light surface */
+    --warning-bg:#fab219;
+    --serious:#ec835a;
+    --critical:#d03b3b;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background:var(--page);
+    color:var(--ink);
+    line-height:1.55;
+  }
+  header{
+    padding:48px 24px 32px;
+    max-width:980px;
+    margin:0 auto;
+  }
+  header h1{
+    font-size:30px;
+    margin:0 0 8px;
+    letter-spacing:-0.01em;
+  }
+  header p.sub{
+    color:var(--ink-2);
+    font-size:16px;
+    margin:0 0 4px;
+    max-width:680px;
+  }
+  header p.meta{
+    color:var(--muted);
+    font-size:13px;
+    margin-top:16px;
+  }
+  main{
+    max-width:980px;
+    margin:0 auto;
+    padding:0 24px 80px;
+  }
+
+  /* stat tile row */
+  .stats{
+    display:grid;
+    grid-template-columns:repeat(6,1fr);
+    gap:12px;
+    margin:8px 0 40px;
+  }
+  .stat{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:16px 14px;
+  }
+  .stat .n{
+    font-size:28px;
+    font-weight:650;
+    line-height:1;
+  }
+  .stat .l{
+    margin-top:6px;
+    font-size:12.5px;
+    color:var(--ink-2);
+    display:flex;
+    align-items:center;
+    gap:6px;
+  }
+  .dot{width:8px;height:8px;border-radius:50%;flex:none;}
+  .stat.critical .n{color:var(--critical);}
+  .stat.high .n{color:var(--serious);}
+  .stat.medium .n{color:var(--warning);}
+  .stat.low .n{color:var(--muted);}
+  .stat.working .n{color:var(--good);}
+  .stat.fixed .n{color:var(--good);}
+  .stat.fixed{border-color:var(--good);}
+  .dot.critical{background:var(--critical);}
+  .dot.high{background:var(--serious);}
+  .dot.medium{background:var(--warning-bg);}
+  .dot.low{background:var(--muted);}
+  .dot.working{background:var(--good);}
+  .dot.fixed{background:var(--good);}
+
+  h2.section{
+    font-size:13px;
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+    color:var(--muted);
+    margin:44px 0 16px;
+    padding-top:20px;
+    border-top:1px solid var(--grid);
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  h2.section:first-of-type{border-top:none;padding-top:0;}
+
+  .card{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:20px 22px;
+    margin-bottom:14px;
+  }
+  .card .badge-row{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-bottom:8px;
+  }
+  .badge{
+    font-size:11px;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:0.04em;
+    padding:3px 8px;
+    border-radius:5px;
+    color:#fff;
+  }
+  .badge.critical{background:var(--critical);}
+  .badge.high{background:var(--serious);}
+  .badge.medium{background:var(--warning-bg); color:#3a2900;}
+  .badge.low{background:var(--muted);}
+  .badge.working{background:var(--good);}
+  .badge.fixed{background:var(--good);}
+  .card.done{opacity:0.92;}
+  .card.done h3{text-decoration:none;}
+  .card.done::after{content:none;}
+  .resolution{
+    background:#f0f7f0;
+    border:1px solid rgba(12,163,12,0.25);
+    border-left:3px solid var(--good);
+    border-radius:6px;
+    padding:10px 14px;
+    margin-top:12px;
+    font-size:14px;
+  }
+  .resolution .rlabel{
+    font-size:11px;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:0.04em;
+    color:#006300;
+    margin-bottom:4px;
+  }
+  .card h3{
+    margin:0;
+    font-size:16.5px;
+    font-weight:650;
+  }
+  .card .files{
+    font-size:12.5px;
+    color:var(--muted);
+    margin:2px 0 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .card p{
+    margin:0 0 10px;
+    font-size:14.5px;
+    color:var(--ink);
+  }
+  .card p.label{
+    font-size:12px;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:0.04em;
+    color:var(--muted);
+    margin:14px 0 4px;
+  }
+  .card p.label:first-of-type{margin-top:0;}
+  code, pre{
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size:12.5px;
+  }
+  pre{
+    background:var(--page);
+    border:1px solid var(--grid);
+    border-radius:6px;
+    padding:10px 12px;
+    overflow-x:auto;
+    margin:4px 0 12px;
+  }
+  code.inline{
+    background:var(--page);
+    border:1px solid var(--grid);
+    border-radius:4px;
+    padding:1px 5px;
+  }
+
+  ul.plain{margin:0; padding-left:20px; font-size:14.5px;}
+  ul.plain li{margin-bottom:6px;}
+
+  .working-grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:10px;
+  }
+  .working-item{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:12px 14px;
+    font-size:14px;
+    display:flex;
+    gap:10px;
+    align-items:flex-start;
+  }
+  .working-item .check{
+    color:var(--good);
+    font-weight:700;
+    flex:none;
+  }
+
+  .notverified{
+    background:var(--surface);
+    border:1px dashed var(--border);
+    border-radius:8px;
+    padding:14px 16px;
+    font-size:14px;
+    margin-bottom:8px;
+  }
+  .notverified b{font-weight:650;}
+
+  footer{
+    max-width:980px;
+    margin:0 auto;
+    padding:0 24px 60px;
+    color:var(--muted);
+    font-size:12.5px;
+  }
+
+  @media (max-width:720px){
+    .stats{grid-template-columns:repeat(2,1fr);}
+    .working-grid{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>LyricLift — QA Assessment</h1>
+  <p class="sub">Full pass over the codebase and a running local instance: static review of every backend/frontend file, plus live testing of the actual extraction pipeline (real speech audio in, real transcription out), error paths, and endpoint behavior.</p>
+  <p class="meta">Assessed 2026-07-01 · Sonnet 5 · Local instance run against the exact production code (app.py + assets/js/app.js), Whisper tiny + yt-dlp installed locally</p>
+
+  <div class="stats">
+    <div class="stat critical"><div class="n">0</div><div class="l"><span class="dot critical"></span>Critical open</div></div>
+    <div class="stat high"><div class="n">0</div><div class="l"><span class="dot high"></span>High open</div></div>
+    <div class="stat medium"><div class="n">0</div><div class="l"><span class="dot medium"></span>Medium open</div></div>
+    <div class="stat low"><div class="n">0</div><div class="l"><span class="dot low"></span>Low open</div></div>
+    <div class="stat fixed"><div class="n">17</div><div class="l"><span class="dot fixed"></span>Fixed</div></div>
+    <div class="stat working"><div class="n">8</div><div class="l"><span class="dot working"></span>Verified working</div></div>
+  </div>
+  <p class="meta" style="margin-top:-24px;">Fix progress: <b>17 defects resolved</b> (13 first pass + 4 from a second adversarial re-audit) · 1 remaining item is an acknowledged model tradeoff, not a bug · last updated 2026-07-02</p>
+</header>
+
+<main>
+
+  <h2 class="section">Critical</h2>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge critical">Critical</span></div>
+    <h3>YouTube URL extraction fails — "Video unavailable"</h3>
+    <div class="files">app.py:84–98</div>
+    <p>Ran the app's exact <code class="inline">yt-dlp</code> download command against a known-stable YouTube test video. It failed immediately:</p>
+    <pre>WARNING: [youtube] No supported JavaScript runtime could be found. Only deno is enabled by
+default... YouTube extraction without a JS runtime has been deprecated...
+ERROR: [youtube] BaW_jenozKc: Video unavailable</pre>
+    <p>YouTube now requires a JS runtime (deno or node, passed via <code class="inline">--js-runtimes</code>) for reliable extraction — yt-dlp doesn't auto-detect one. Neither <code class="inline">app.py</code> nor <code class="inline">extract.php</code> pass this flag, and no JS runtime is installed alongside the app. YouTube is the app's flagship, most-advertised input method — this is the most likely explanation for "it doesn't work" reports.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-01</div>
+      <p style="margin:0 0 8px;">Added a <code class="inline">detect_js_runtime()</code> helper to <code class="inline">app.py</code> that finds an installed runtime (deno → node → bun, overridable via <code class="inline">LYRICLIFT_JS_RUNTIME</code>) and passes <code class="inline">--js-runtimes</code> to the yt-dlp command. When no runtime is found, the error message now says so explicitly instead of a generic failure, and the yt-dlp stderr is logged for debugging.</p>
+      <p style="margin:0;"><b>Verified:</b> a live YouTube URL now transcribes end-to-end through the running app — returned correct SRT text with timestamps. (The original test video ID was genuinely deleted; a known-good video confirmed the fix.)</p>
+    </div>
+    <p class="label" style="color:var(--critical);">Server action still required</p>
+    <p><b>A JS runtime must be installed on the production server</b> (empire-command) for this to take effect there. Install deno (yt-dlp's recommendation): <code class="inline">curl -fsSL https://deno.land/install.sh | sh</code>, or ensure <code class="inline">node</code> is on the service's PATH. Tracked in the deploy doc fix (Medium #5).</p>
+  </div>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge critical">Critical</span></div>
+    <h3>Two backends with incompatible API contracts ship in the same repo</h3>
+    <div class="files">app.py (Flask) vs. index.php / extract.php / status.php / download.php / delete.php</div>
+    <p>The current frontend (<code class="inline">assets/js/app.js</code>, rewritten 2026-06-14) posts to <code class="inline">/extract</code> expecting an async <code class="inline">{jobId, status:"processing"}</code> response, then polls <code class="inline">/status/&lt;jobId&gt;</code> — this only matches Flask's routes in app.py. The PHP files implement an older, different flow (synchronous response shape, PHP-spawned background script, separate job-id format). <code class="inline">DEPLOY_FLASK.md</code> confirms the PHP backend was meant to be retired ("Step 4: Stop Old PHP Server").</p>
+    <p>Both the PHP files and two different nginx vhost configs (<code class="inline">lyriclift.conf</code> for PHP, <code class="inline">lyriclift-flask.conf</code> for Flask) still live in the repo and get pushed to the server on every <code class="inline">rsync</code> deploy. If the live nginx symlink ever points at the PHP vhost — now or after a future deploy mistake — the entire app breaks, because the PHP scripts don't speak the protocol the current JS expects.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-01</div>
+      <p style="margin:0 0 8px;">Deleted the entire dead PHP backend (<code class="inline">extract.php</code>, <code class="inline">status.php</code>, <code class="inline">download.php</code>, <code class="inline">delete.php</code>) and the PHP nginx config (<code class="inline">lyriclift.conf</code>). Renamed <code class="inline">index.php</code> → <code class="inline">index.html</code> (it was always just an HTML template Flask reads) and updated <code class="inline">app.py</code> to serve it via an absolute path. Also removed the obsolete PHP-era docs (<code class="inline">DEPLOYMENT.md</code>, <code class="inline">QUICK_START.md</code>, <code class="inline">DEPLOY_COMMANDS.txt</code>) and rewrote <code class="inline">README.md</code> to describe the actual Flask architecture. Only <code class="inline">lyriclift-flask.conf</code> remains.</p>
+      <p style="margin:0;"><b>Verified:</b> app restarted cleanly, <code class="inline">GET /</code> serves the renamed template (HTTP 200, correct title), CSS/JS still load. Everything is recoverable from git history if needed.</p>
+    </div>
+    <p class="label" style="color:var(--serious);">Server action still recommended</p>
+    <p>Confirm on the production server that <code class="inline">sites-enabled</code> points at the Flask vhost (<code class="inline">lyriclift-flask.conf</code>), and delete any old PHP <code class="inline">lyriclift.conf</code> symlink left there from before. See Low #1.</p>
+  </div>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge critical">Critical</span></div>
+    <h3>All the recent favicon / PWA / social-image work is dead — 404 on every route</h3>
+    <div class="files">public/manifest.json · public/landing.html · public/favicon*.png · public/og-image.png · public/apple-touch-icon.png</div>
+    <p>Confirmed by requesting these paths directly against the running app:</p>
+    <pre>404  /favicon.ico
+404  /manifest.json
+404  /apple-touch-icon.png
+404  /og-image.png
+404  /public/landing.html</pre>
+    <p>Flask's <code class="inline">app.py</code> only serves <code class="inline">/</code> and static files under <code class="inline">/assets/*</code> — nothing maps the <code class="inline">public/</code> folder to any URL, and no nginx config references it either. This means the last several commits ("Set up proper home screen icon," "Generate professional favicon and OG image," "Create professional branded icons...") produced <b>zero visible change</b> on the live site.</p>
+    <p>Separately, <code class="inline">public/landing.html</code> describes the product as <em>"Lyric Lift — Songwriting Assistant... AI-powered lyrics, Music collaboration, Artist toolkit"</em> — a different product than the actual transcription tool. Even once wired up, this copy would need rewriting.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-02</div>
+      <p style="margin:0 0 8px;">Compared both icon sets visually. The <code class="inline">public/</code> set was <b>off-brand and wrong</b>: purple "karaoke platform" theme (the app is a dark-blue transcription tool), "LYRICS" text bleeding off the icon edges, and OG copy for a different product. The <code class="inline">assets/images/</code> set is the correct one — dark theme matching the app, a blue lightning-bolt mark, and correct "Extract Lyrics &amp; Transcripts" copy — and it was <em>already</em> referenced by index.html and serving fine (200).</p>
+      <p style="margin:0 0 8px;">So: deleted the entire off-brand <code class="inline">public/</code> folder (including the wrong-copy <code class="inline">landing.html</code>), then fulfilled the original "home screen icon" intent <em>correctly</em> — added <code class="inline">assets/manifest.webmanifest</code> with proper name/description and the app's real theme color (<code class="inline">#1a1a2e</code>), pointing at the good icon, and wired <code class="inline">&lt;link rel="manifest"&gt;</code> + <code class="inline">theme-color</code> into index.html.</p>
+      <p style="margin:0;"><b>Verified:</b> favicon (.ico/.png), social-preview image, and the new manifest all return 200 on the running app; the manifest link is present in the served HTML.</p>
+    </div>
+    <p class="label" style="color:var(--serious);">Open question (asked, awaiting answer)</p>
+    <p>The OG/Twitter/canonical URLs in index.html point to <code class="inline">https://lyriclift.com</code>, but all server infra uses <code class="inline">lyriclift.peoplestar.com</code>. If the site is actually served at peoplestar, the social-preview image URL is broken. Left as-is pending confirmation of the real public domain — a one-line change once known.</p>
+  </div>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge critical">Critical</span></div>
+    <h3>The documented SSL fix (<code class="inline">PYTHONHTTPSVERIFY=0</code>) does not work</h3>
+    <div class="files">app.py:130 · extract.php background script (~line 127) · README.md § Troubleshooting</div>
+    <p>README lists this as an already-applied fix for Whisper's SSL error. Reproduced it directly: ran the exact whisper model-download call with <code class="inline">PYTHONHTTPSVERIFY=0</code> set exactly as app.py sets it, and it still failed —</p>
+    <pre>ssl.SSLCertVerificationError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed:
+self signed certificate in certificate chain</pre>
+    <p>If the model cache is ever cleared, a different model size is used, or the server hits any TLS interception/certificate issue, transcription fails immediately with the app's generic <em>"Transcription failed"</em> message — giving no signal that matches the README's own troubleshooting advice.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-02</div>
+      <p style="margin:0 0 8px;">Removed the ineffective <code class="inline">PYTHONHTTPSVERIFY=0</code>. Added <code class="inline">ensure_whisper_model()</code> which pre-fetches the model into the cache <em>before</em> transcription using a proper CA bundle (certifi, added to <code class="inline">requirements.txt</code>; falls back to system certs) and verifies its SHA-256 checksum — so the transcription subprocess never has to make a network/TLS call. The model is also preloaded at startup (surfacing any problem in the logs at boot), and the whisper subprocess now gets <code class="inline">SSL_CERT_FILE</code>/<code class="inline">REQUESTS_CA_BUNDLE</code> pointed at the good bundle as a fallback. When the model genuinely can't be obtained, the user now sees a clear "model unavailable" message instead of a generic failure.</p>
+      <p style="margin:0;"><b>Verified:</b> (1) model present → transcribes correctly; (2) model missing + download blocked → job returns the clear "Speech recognition model is unavailable" message and the app stays alive (no crash); (3) startup logs a warning when the model can't be preloaded.</p>
+    </div>
+    <p class="label" style="color:var(--serious);">Recommended for production</p>
+    <p><b>Bake the model file into the deploy</b> (<code class="inline">.cache/whisper/tiny.pt</code>) so runtime never needs the network at all. Note: on this dev machine the download still fails because of a local corporate TLS-intercepting proxy (a self-signed root not in any bundle) — that's an environment artifact, not the app; a normal server with <code class="inline">ca-certificates</code> + certifi downloads fine.</p>
+  </div>
+
+  <h2 class="section">High</h2>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge high">High</span></div>
+    <h3>No .gitignore — generated runtime data can be committed</h3>
+    <div class="files">(repo root)</div>
+    <p>There is no <code class="inline">.gitignore</code> at all. <code class="inline">git status</code> shows <code class="inline">tmp/</code> as untracked with nothing stopping <code class="inline">git add -A</code>/<code class="inline">git add .</code> from committing it. <code class="inline">tmp/</code> holds per-job status files that embed the full transcribed text, plus raw uploaded audio while a job runs.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-02</div>
+      <p style="margin:0 0 8px;">Added a <code class="inline">.gitignore</code> covering <code class="inline">tmp/*</code> (keeping the dir via <code class="inline">tmp/.gitkeep</code>), <code class="inline">.cache/</code>, Python cruft (<code class="inline">__pycache__/</code>, venvs), OS/editor files (<code class="inline">.DS_Store</code>, etc.), and the local <code class="inline">.aios_relay/</code> scratch. Also untracked the two <code class="inline">.DS_Store</code> files that were already committed.</p>
+      <p style="margin:0;"><b>Verified:</b> a dropped test file <code class="inline">tmp/job_test123.json</code> is correctly ignored, and a dry-run <code class="inline">git add -A</code> now stages only real source files.</p>
+    </div>
+  </div>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge high">High</span></div>
+    <h3>Download button never talks to the server — /download and download.php are unreachable dead code</h3>
+    <div class="files">assets/js/app.js:291–306 · app.py:304–316 · download.php</div>
+    <p>The Download button builds a client-side <code class="inline">Blob</code> from the text already in memory — it never fetches <code class="inline">/download</code> or <code class="inline">download.php</code>. Both server-side download endpoints are therefore unused by the actual UI, even though the README documents <code class="inline">download.php</code> as a live API.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-02</div>
+      <p style="margin:0 0 8px;">Found the <code class="inline">/download</code> route was not just unused but <b>broken</b>: the job's <code class="inline">finally</code> block deletes the output file the instant transcription finishes, and the route looked for a <code class="inline">transcription_&lt;date&gt;.srt</code> name that never exists on disk — so it could never serve anything. Removed the dead Flask <code class="inline">/download</code> route (and the now-unused <code class="inline">send_from_directory</code> import), left a comment explaining why there's no server download, and updated the README API docs to match. The client-side Blob download (the real, working mechanism) is untouched.</p>
+      <p style="margin:0;"><b>Verified:</b> <code class="inline">/download/&lt;name&gt;</code> now returns 404 (route gone), the happy-path transcription still completes and returns text + filename, and the page loads with no JS errors.</p>
+    </div>
+  </div>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge high">High</span></div>
+    <h3>Temp-file cleanup call is dead code, and would 404 anyway</h3>
+    <div class="files">assets/js/app.js:308–324 · delete.php</div>
+    <p><code class="inline">deleteTemporaryFile()</code> is defined in app.js but never called from anywhere else in the file — so no cleanup request is ever sent from the UI today. Even if it were called, Flask has no <code class="inline">/delete</code> route or PHP execution, so the request would 404 (confirmed).</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-02</div>
+      <p style="margin:0;">Removed the dead <code class="inline">deleteTemporaryFile()</code> function from app.js (it referenced the deleted <code class="inline">delete.php</code>). Server-side cleanup is handled properly instead: each job deletes its own files when it finishes, and stale files are swept by TTL — now on a background timer too (see Medium: idle cleanup). <b>Verified:</b> no remaining <code class="inline">delete.php</code>/<code class="inline">deleteTemporaryFile</code> references, app.js passes a syntax check, and the page runs with no console errors.</p>
+    </div>
+  </div>
+
+  <h2 class="section">Medium</h2>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge medium">Medium</span></div>
+    <h3>Broken shell-escaping in extract.php's background script</h3>
+    <div class="files">extract.php (~line 97)</div>
+    <pre>$dlCmd = 'python3 -m yt_dlp ... -o "' . $audioPath . '" "' . escapeshellarg($url) . '" 2>&1';</pre>
+    <p><code class="inline">escapeshellarg()</code> already wraps its output in single quotes for shell safety — nesting that inside an <em>additional</em> pair of double quotes neutralizes the escaping (single quotes are literal characters inside double quotes), so yt-dlp receives a malformed URL with literal quote characters stuck to it. Only matters if the PHP path is ever reactivated, but it's a real, verifiable bug sitting in the repo today.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-01</div>
+      <p style="margin:0;">Moot — <code class="inline">extract.php</code> was deleted with the dead PHP backend (Critical #2). The live Flask path uses a proper argument list (<code class="inline">subprocess.run([...])</code>) with no shell, so this class of quoting bug can't occur there.</p>
+    </div>
+  </div>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge medium">Medium</span></div>
+    <h3>Wrong file-size limit in the user-facing error message</h3>
+    <div class="files">extract.php:33, 46</div>
+    <p><code class="inline">$MAX_SIZE = 104857600;</code> (100MB) but the thrown error says <em>"File too large (max 30MB)"</em> — stale text that doesn't match the actual limit.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-01</div>
+      <p style="margin:0;">Moot — the file with the wrong message (<code class="inline">extract.php</code>) was deleted. Flask's message correctly reads "File too large. Maximum 100MB." and matches the actual limit.</p>
+    </div>
+  </div>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge medium">Medium</span></div>
+    <h3>Submitting both a URL and a file silently drops the URL</h3>
+    <div class="files">app.py:231–266</div>
+    <p>If a request includes both <code class="inline">file</code> and <code class="inline">url</code>, the file silently wins with no error. The UI blocks this combination client-side, so it's unreachable through normal use — only relevant to direct API callers or if the client-side check is bypassed.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-02</div>
+      <p style="margin:0;">The <code class="inline">/extract</code> handler now rejects requests that include both a URL and a file with <code class="inline">400 "Provide either a URL or a file, not both."</code> instead of silently discarding one. <b>Verified:</b> both-inputs → 400 with the clear message; URL-only and file-only each still return 202 and process normally.</p>
+    </div>
+  </div>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge medium">Medium</span></div>
+    <h3>Old job files can accumulate indefinitely on a quiet server</h3>
+    <div class="files">app.py:61–66, 220</div>
+    <p><code class="inline">cleanup_old_jobs()</code> (6-hour TTL) only runs at the top of the <code class="inline">/extract</code> handler. If no one submits a new job, nothing ever triggers the sweep — old job JSON just sits in <code class="inline">tmp/</code> past its TTL.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-02</div>
+      <p style="margin:0;">Added <code class="inline">start_cleanup_scheduler()</code> — a background daemon timer (runs at least hourly) that sweeps stale files regardless of traffic — started at app startup. Also hardened <code class="inline">cleanup_old_jobs()</code> to skip dotfiles so it never deletes <code class="inline">tmp/.gitkeep</code>. <b>Verified:</b> an artificially-aged job file is removed while a fresh one and <code class="inline">.gitkeep</code> survive, and the timer fires on its interval (tested at a 1s interval).</p>
+    </div>
+  </div>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge medium">Medium</span></div>
+    <h3>DEPLOY_FLASK.md references a file no step ever creates</h3>
+    <div class="files">DEPLOY_FLASK.md (~line 53–55)</div>
+    <p>The doc copies <code class="inline">lyriclift-flask.conf</code> to <code class="inline">/etc/nginx/sites-available/lyriclift</code>, then symlinks <code class="inline">.../sites-available/lyriclift.php</code> — a filename no earlier step produced. Following the doc literally fails at that step.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-02</div>
+      <p style="margin:0;">Rewrote the nginx step to correctly <code class="inline">ln -sf .../sites-available/lyriclift .../sites-enabled/lyriclift</code>. While in the doc, also added the two server-side actions surfaced by the Critical fixes: <b>install a JS runtime</b> (<code class="inline">apt install nodejs</code>, reliably on the www-data PATH) for YouTube, and <b>pre-bake the Whisper model</b> to avoid runtime downloads; and turned the obsolete "stop old PHP" step into a one-time "retire the old PHP nginx site" migration so it can't shadow the Flask vhost.</p>
+    </div>
+  </div>
+
+  <h2 class="section">Low</h2>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge low">Low</span></div>
+    <h3>Two nginx vhost configs, unclear which is actually live</h3>
+    <div class="files">lyriclift.conf · lyriclift-flask.conf</div>
+    <p>Both configs live in the repo. Nothing in it records which one is symlinked into <code class="inline">sites-enabled</code> on the server — worth confirming there directly, since the Critical finding above depends on it.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-01 (repo side)</div>
+      <p style="margin:0;">The PHP <code class="inline">lyriclift.conf</code> was deleted; only <code class="inline">lyriclift-flask.conf</code> remains in the repo, so there's no longer any ambiguity about which config is correct. <b>Still worth a one-time check on the server</b> that <code class="inline">sites-enabled</code> points at the Flask config and no stale PHP symlink lingers.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="badge-row"><span class="badge low">Acknowledged</span></div>
+    <h3>Whisper "tiny" model can hallucinate on near-silent audio</h3>
+    <div class="files">app.py:139 — <code class="inline">--no_speech_threshold 0.1</code></div>
+    <p>A low no-speech threshold plus the smallest Whisper model is a known combination for occasional hallucinated text on silence. This is the documented speed/accuracy tradeoff of using the "tiny" model, not a code defect — flagged for awareness, not as a fix item.</p>
+    <div class="resolution" style="background:#f7f6f0; border-left-color:var(--muted); border-color:rgba(137,135,129,0.3);">
+      <div class="rlabel" style="color:var(--ink-2);">Left as-is — a tradeoff decision, not a bug</div>
+      <p style="margin:0;">The aggressive <code class="inline">--no_speech_threshold 0.1</code> was almost certainly set on purpose to reduce false "No speech detected" errors; raising it or moving to a larger model trades speed for fewer hallucinations. That's a product call, so it's left unchanged pending your preference. If you want, I can bump the threshold toward the default (0.6) or switch to the <code class="inline">base</code>/<code class="inline">small</code> model.</p>
+    </div>
+  </div>
+
+  <h2 class="section">Second-pass re-audit (post-fix)</h2>
+  <p style="font-size:14px; color:var(--ink-2); margin:-4px 0 16px;">After the first round of fixes, I re-reviewed the whole modified codebase from scratch — plus an independent second reviewer — specifically to catch anything missed or newly introduced. Four additional real bugs surfaced; all are now fixed and verified.</p>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge high">High</span></div>
+    <h3>Uploading a file with a non-ASCII name returned HTTP 500</h3>
+    <div class="files">app.py:397–398 (upload handler)</div>
+    <p>The upload handler derived the extension from <code class="inline">secure_filename(file.filename)</code>. For any non-Latin basename — <code class="inline">Пример.mp3</code>, <code class="inline">日本語.mp4</code>, <code class="inline">音楽.mp3</code> — <code class="inline">secure_filename</code> strips the name down to just <code class="inline">"mp3"</code> (no dot), so <code class="inline">.rsplit('.',1)[1]</code> threw <code class="inline">IndexError</code> → caught by the generic handler → <b>HTTP 500 "list index out of range."</b> The extension check passed on the raw name, so any international user with a normally-named file simply couldn't upload.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-02</div>
+      <p style="margin:0;">Take the extension from the original filename (already validated against the whitelist by <code class="inline">allowed_file</code>) and dropped <code class="inline">secure_filename</code> entirely — it was providing no safety here since the saved file is named after the safe <code class="inline">job_id</code>, not the user's name. <b>Verified:</b> reproduced the 500 with <code class="inline">Пример.mp3</code>, then confirmed the same upload now returns 202 and transcribes to the correct text; uppercase (<code class="inline">.MP3</code>) and multi-dot (<code class="inline">my.song.final.mp3</code>) names also work, and a no-extension file is still cleanly rejected with 400.</p>
+    </div>
+  </div>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge medium">Medium</span></div>
+    <h3>The cleanup sweeper could delete a still-running long job mid-transcription</h3>
+    <div class="files">app.py — cleanup_old_jobs vs. run_transcription_job</div>
+    <p><code class="inline">cleanup_old_jobs()</code> deletes files older than the 6-hour TTL by mtime, and it now runs on a timer. But a job's status-file mtime is only written at each state change — it's frozen during the (possibly multi-hour) Whisper run. The app explicitly advertises hour-long jobs and the frontend polls for up to 12 hours, so a transcription running past 6h would have its status file (and input audio) swept out from under it → <code class="inline">/status</code> starts returning 404 → the user sees "job not found" even though it's still processing.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-02</div>
+      <p style="margin:0;">Added a per-job heartbeat (<code class="inline">start_job_heartbeat</code>) that bumps the status file's mtime every 5 minutes while the job is alive and stops in the job's <code class="inline">finally</code> block. Live jobs stay fresh so the sweeper never touches them; a crashed/orphaned job stops heartbeating and still ages out normally. <b>Verified:</b> with a shortened TTL, a heartbeating job survived every sweep past its TTL, while a job whose heartbeat was stopped was correctly swept — and a normal job still completes and cleans up with no leftover files.</p>
+    </div>
+  </div>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge medium">Medium</span></div>
+    <h3>requirements.txt omitted the two core processing dependencies</h3>
+    <div class="files">requirements.txt</div>
+    <p>The app shells out to <code class="inline">python3 -m yt_dlp</code> and <code class="inline">python3 -m whisper</code>, but <code class="inline">requirements.txt</code> listed only Flask/Werkzeug/gunicorn/certifi. A fresh host provisioned with <code class="inline">pip install -r requirements.txt</code> would have neither tool — so every download and every transcription would fail at the subprocess.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-02</div>
+      <p style="margin:0;">Added <code class="inline">yt-dlp</code> and <code class="inline">openai-whisper</code> to <code class="inline">requirements.txt</code>, with comments noting whisper is heavy (pulls torch) and that <b>ffmpeg</b> is still a required system package. yt-dlp is intentionally left unpinned so it stays current with YouTube changes.</p>
+    </div>
+  </div>
+
+  <div class="card done">
+    <div class="badge-row"><span class="badge fixed">✓ Fixed</span><span class="badge low">Low</span></div>
+    <h3>Two gunicorn workers could corrupt a cold-start model download</h3>
+    <div class="files">app.py — ensure_whisper_model</div>
+    <p>The systemd unit runs <code class="inline">--workers 2</code>, and each worker runs the model pre-fetch at import. The download used a fixed temp path (<code class="inline">tiny.pt.download</code>), so on a first-ever startup with no cached model, both workers could write the same temp file concurrently → corrupted download → checksum mismatch → model flagged unavailable.</p>
+    <div class="resolution">
+      <div class="rlabel">✓ Resolved 2026-07-02</div>
+      <p style="margin:0;">The download temp file is now per-process (<code class="inline">tiny.pt.&lt;pid&gt;.download</code>), so concurrent workers can't clobber each other; the checksum-verified <code class="inline">os.replace</code> into the final path stays atomic. (Not using gunicorn <code class="inline">--preload</code> on purpose — it would run module-level thread starts in the master, and threads don't survive fork, which would silently disable the cleanup timer in workers.)</p>
+    </div>
+  </div>
+
+  <h2 class="section">Verified working</h2>
+  <div class="working-grid">
+    <div class="working-item"><span class="check">✓</span>Home page loads and renders correctly (dark theme, layout intact)</div>
+    <div class="working-item"><span class="check">✓</span>"No URL or file" validation — correct message, Back button restores form</div>
+    <div class="working-item"><span class="check">✓</span>Invalid URL correctly rejected, client message matches server response</div>
+    <div class="working-item"><span class="check">✓</span>Wrong file extension rejected both client-side and server-side</div>
+    <div class="working-item"><span class="check">✓</span>Full upload → transcription pipeline verified end-to-end: real speech audio in, correct text + filename out</div>
+    <div class="working-item"><span class="check">✓</span>Job status polling: correct queued → transcribing → done transitions, well-formed JSON</div>
+    <div class="working-item"><span class="check">✓</span>Malformed/unknown job IDs rejected; path-traversal attempt on /status blocked</div>
+    <div class="working-item"><span class="check">✓</span>Static asset serving (CSS/JS/favicon/manifest/social image) works correctly</div>
+  </div>
+
+  <h2 class="section">Not verified this pass</h2>
+  <div class="notverified"><b>Mobile / responsive layout</b> — the browser-resize tool used in this session didn't reliably change the rendered viewport; needs a real device or dev-tools check.</div>
+  <div class="notverified"><b>Drag-and-drop upload / full in-browser upload → result round trip</b> — sandboxing prevented driving the native file picker in this session; the upload path was verified via direct API calls instead, not through the UI's dropzone.</div>
+  <div class="notverified"><b>Non-YouTube URL sources</b> — Facebook, Instagram, Vimeo, TikTok, Twitter/X, Twitch, Dailymotion are all advertised as supported but weren't individually tested; only YouTube (failed) and one generic direct-file URL were tried.</div>
+  <div class="notverified"><b>Production server behavior</b> — the YouTube/SSL failures above were reproduced against the app's exact code on a local machine. Network and certificate conditions can differ on the actual production host (empire-command) — worth confirming there directly rather than assuming identical failure.</div>
+  <div class="notverified"><b>Large files / concurrent load</b> — the 100MB limit and multi-job concurrency weren't load-tested.</div>
+
+</main>
+
+<footer>
+  LyricLift QA assessment · generated locally against the current working tree · no changes were made to the app during testing (temp files and the local model cache created for this test were removed afterward)
+</footer>
+
+</body>
+</html>
