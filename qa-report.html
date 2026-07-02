@@ -285,8 +285,11 @@ ERROR: [youtube] BaW_jenozKc: Video unavailable</pre>
       <p style="margin:0 0 8px;">Added a <code class="inline">detect_js_runtime()</code> helper to <code class="inline">app.py</code> that finds an installed runtime (deno → node → bun, overridable via <code class="inline">LYRICLIFT_JS_RUNTIME</code>) and passes <code class="inline">--js-runtimes</code> to the yt-dlp command. When no runtime is found, the error message now says so explicitly instead of a generic failure, and the yt-dlp stderr is logged for debugging.</p>
       <p style="margin:0;"><b>Verified:</b> a live YouTube URL now transcribes end-to-end through the running app — returned correct SRT text with timestamps. (The original test video ID was genuinely deleted; a known-good video confirmed the fix.)</p>
     </div>
-    <p class="label" style="color:var(--critical);">Server action still required</p>
-    <p><b>A JS runtime must be installed on the production server</b> (empire-command) for this to take effect there. Install deno (yt-dlp's recommendation): <code class="inline">curl -fsSL https://deno.land/install.sh | sh</code>, or ensure <code class="inline">node</code> is on the service's PATH. Tracked in the deploy doc fix (Medium #5).</p>
+    <div class="resolution" style="background:#fdf6ec; border-left-color:var(--warning-bg); border-color:rgba(250,178,25,0.35);">
+      <div class="rlabel" style="color:#8a5a00;">⚠ Production reality (verified live 2026-07-02)</div>
+      <p style="margin:0 0 8px;">Deployed to <code class="inline">empire-command</code> and tested against <code class="inline">https://lyriclift.peoplestar.com</code>. <code class="inline">node</code> is installed, so the JS-runtime fix works — but <b>YouTube still blocks the download because the server is on a datacenter IP</b> (<code class="inline">HTTP 429</code> + "Sign in to confirm you're not a bot"). This is YouTube's anti-VPS bot check, not a code issue — the same request succeeds from a residential IP.</p>
+      <p style="margin:0;"><b>Mitigations added:</b> the app now (1) auto-uses a <code class="inline">youtube_cookies.txt</code> file if present (drop in a logged-in session export to make YouTube work — see DEPLOY_FLASK.md §3c), and (2) returns a clear "please upload the file directly instead" message when a download is bot-blocked. <b>File upload → transcription is fully working on production</b> and is the reliable path.</p>
+    </div>
   </div>
 
   <div class="card done">
@@ -527,7 +530,7 @@ self signed certificate in certificate chain</pre>
   <div class="notverified"><b>Mobile / responsive layout</b> — the browser-resize tool used in this session didn't reliably change the rendered viewport; needs a real device or dev-tools check.</div>
   <div class="notverified"><b>Drag-and-drop upload / full in-browser upload → result round trip</b> — sandboxing prevented driving the native file picker in this session; the upload path was verified via direct API calls instead, not through the UI's dropzone.</div>
   <div class="notverified"><b>Non-YouTube URL sources</b> — Facebook, Instagram, Vimeo, TikTok, Twitter/X, Twitch, Dailymotion are all advertised as supported but weren't individually tested; only YouTube (failed) and one generic direct-file URL were tried.</div>
-  <div class="notverified"><b>Production server behavior</b> — the YouTube/SSL failures above were reproduced against the app's exact code on a local machine. Network and certificate conditions can differ on the actual production host (empire-command) — worth confirming there directly rather than assuming identical failure.</div>
+  <div class="notverified" style="border-style:solid; border-color:rgba(12,163,12,0.3); background:#f0f7f0;"><b>✓ Production deploy (done 2026-07-02)</b> — deployed to empire-command and verified live at https://lyriclift.peoplestar.com: service active, new HTML/manifest/favicon/social-image served, old PHP routes 404, OG domain corrected, and <b>file-upload transcription works end-to-end on the live server</b>. The old app dir was backed up first (<code>/root/lyriclift-backup-*.tar.gz</code>). Only remaining live gap is YouTube (datacenter-IP bot block — needs cookies/proxy, see the YouTube card above).</div>
   <div class="notverified"><b>Large files / concurrent load</b> — the 100MB limit and multi-job concurrency weren't load-tested.</div>
 
 </main>
