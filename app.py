@@ -13,6 +13,10 @@ import uuid
 from datetime import datetime, timezone
 
 app = Flask(__name__, static_folder='assets', static_url_path='/assets')
+from ck1pw.door import register_ck1pw
+register_ck1pw(app)
+from ck1pw.gate import register_gate
+register_gate(app)
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 # Long recordings can take hours on the small CPU-only production server.
 # A value of 0 disables the Whisper subprocess timeout.
