@@ -265,7 +265,7 @@ def reclaim_orphaned_jobs():
         path = os.path.join(folder, name)
         if os.path.isdir(path):
             # An orphaned per-job cache directory from a killed job.
-            if name.endswith('.cache'):
+            if name.endswith('.cache') or name.endswith('.chunks'):
                 remove_tree_if_exists(path)
             continue
         if not os.path.isfile(path):
@@ -337,6 +337,241 @@ def start_cleanup_scheduler(interval_seconds=None):
 
 def whisper_timeout():
     return PROCESSING_TIMEOUT_SECONDS if PROCESSING_TIMEOUT_SECONDS > 0 else None
+
+# --- Long-recording support -------------------------------------------------
+# Whisper holds the whole decoded recording in memory as float32, so peak RSS
+# grows with DURATION, not file size. On a 2GB box already running MySQL and
+# ~40 other sites, a 69-minute upload is enough for the kernel OOM killer to
+# take gunicorn out mid-job (observed 2026-09-17 22:12:26).
+#
+# So anything long is split into fixed-length chunks, transcribed one at a
+# time, and stitched back together. Peak memory then depends on CHUNK_SECONDS
+# rather than on how long the recording is -- a 3-hour file costs the same as a
+# 10-minute one. Each chunk and its output are deleted the moment they are
+# consumed, so disk does not grow either.
+CHUNK_SECONDS = int(os.environ.get('LYRICLIFT_CHUNK_SECONDS', '600'))
+# Below this, the original single-pass path runs exactly as it always has.
+CHUNK_THRESHOLD_SECONDS = int(os.environ.get('LYRICLIFT_CHUNK_THRESHOLD_SECONDS', '900'))
+
+SRT_TIME_RE = re.compile(
+    r'(\d{2}):(\d{2}):(\d{2}),(\d{3}) --> (\d{2}):(\d{2}):(\d{2}),(\d{3})')
+
+
+def probe_duration_seconds(path):
+    """Duration of a media file per ffprobe, or None if it cannot be read."""
+    try:
+        result = subprocess.run(
+            ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+             '-of', 'default=nw=1:nk=1', path],
+            capture_output=True, text=True, timeout=120
+        )
+        if result.returncode == 0:
+            return float(result.stdout.strip())
+    except Exception as e:
+        print(f"ffprobe failed for {path}: {e}")
+    return None
+
+
+def split_audio_into_chunks(audio_path, out_dir, chunk_seconds):
+    """Split to fixed-length 16kHz mono WAV chunks. Returns sorted paths.
+
+    16kHz mono is exactly what whisper resamples to internally, so this throws
+    away nothing it would have kept, and it shrinks what has to be held in
+    memory: a Zoom m4a at 238kbps stereo carries roughly 15x more data than the
+    model will ever look at.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    pattern = os.path.join(out_dir, 'chunk_%04d.wav')
+    cmd = [
+        'ffmpeg', '-nostdin', '-v', 'error', '-y',
+        '-i', audio_path,
+        '-vn', '-ac', '1', '-ar', '16000',
+        '-f', 'segment', '-segment_time', str(chunk_seconds),
+        '-c:a', 'pcm_s16le',
+        pattern,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+    if result.returncode != 0:
+        print(f"ffmpeg split failed rc={result.returncode}: {result.stderr[:500]}")
+        return []
+    return sorted(
+        os.path.join(out_dir, n) for n in os.listdir(out_dir)
+        if n.startswith('chunk_') and n.endswith('.wav')
+    )
+
+
+def shift_srt(srt_text, offset_seconds, start_index):
+    """Re-time one chunk's SRT into the whole recording, renumbering cues.
+
+    Each chunk is transcribed as if it began at 00:00:00, so without this every
+    chunk's timestamps would restart and the stitched file would be nonsense.
+    """
+    def _shift(match):
+        g = [int(x) for x in match.groups()]
+        start = g[0] * 3600 + g[1] * 60 + g[2] + g[3] / 1000.0 + offset_seconds
+        end = g[4] * 3600 + g[5] * 60 + g[6] + g[7] / 1000.0 + offset_seconds
+        return f'{_srt_stamp(start)} --> {_srt_stamp(end)}'
+
+    lines = []
+    index = start_index
+    for block in re.split(r'\n\s*\n', srt_text.strip()):
+        block = block.strip()
+        if not block:
+            continue
+        parts = block.split('\n')
+        # Drop the chunk-local cue number; we renumber across the whole file.
+        if parts and parts[0].strip().isdigit():
+            parts = parts[1:]
+        if not parts:
+            continue
+        parts[0] = SRT_TIME_RE.sub(_shift, parts[0])
+        lines.append(str(index) + '\n' + '\n'.join(parts))
+        index += 1
+    return '\n\n'.join(lines), index
+
+
+def _srt_stamp(total_seconds):
+    if total_seconds < 0:
+        total_seconds = 0.0
+    hours, rem = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(rem, 60)
+    whole = int(seconds)
+    millis = int(round((seconds - whole) * 1000))
+    if millis == 1000:            # rounding carried into the next second
+        whole += 1
+        millis = 0
+    return f'{int(hours):02d}:{int(minutes):02d}:{whole:02d},{millis:03d}'
+
+
+# Chip, 2026-09-17: "I don't even want a remnant of any of the existing cache
+# files at all. Once the job is done, the only thing I want left is that text
+# file." So the model cache goes too. Measured from the droplet the same night,
+# re-fetching tiny.pt is 75MB in 0.4s with a verified checksum, and
+# ensure_whisper_model() already runs before every job -- so this costs a
+# fraction of a second per job and leaves nothing behind.
+# Set LYRICLIFT_KEEP_MODEL_CACHE=1 to keep the pre-baked model instead.
+KEEP_MODEL_CACHE = os.environ.get('LYRICLIFT_KEEP_MODEL_CACHE', '').strip() in ('1', 'true', 'yes')
+
+
+def other_jobs_active(current_job_id):
+    """True if any OTHER job is mid-flight, per the status files on disk.
+
+    gunicorn runs multiple worker processes, so an in-process counter would not
+    see a job running in a sibling worker. The status files are the one view
+    every worker shares.
+    """
+    folder = app.config['UPLOAD_FOLDER']
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return False
+    for name in names:
+        if not name.endswith('.json') or name.startswith('.'):
+            continue
+        if name == f'{current_job_id}.json':
+            continue
+        try:
+            with open(os.path.join(folder, name)) as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        if data.get('status') in ('queued', 'downloading', 'transcribing'):
+            return True
+    return False
+
+
+def purge_model_cache_if_idle(current_job_id):
+    """Delete the whisper/torch model cache once no job still needs it.
+
+    Skipped while another job is running: that job re-invokes whisper per chunk,
+    and pulling the model out from under it would fail its next chunk.
+    ensure_whisper_model() restores it at the start of the next job.
+    """
+    if KEEP_MODEL_CACHE:
+        return
+    if other_jobs_active(current_job_id):
+        print(f"Job {current_job_id}: another job is active; leaving model cache in place.")
+        return
+    remove_tree_if_exists(CACHE_DIR)
+    print(f"Job {current_job_id}: model cache purged; nothing left but the transcript.")
+
+
+def build_whisper_cmd(input_path, out_dir, output_format):
+    """The whisper invocation, shared by the single-pass and chunked paths."""
+    return [
+        'python3', '-m', 'whisper',
+        input_path,
+        '--model', WHISPER_MODEL,
+        # Explicit, so the disposable XDG_CACHE_HOME can never send whisper
+        # hunting for the model -- or re-downloading it, which fails on a box
+        # whose cert chain cannot verify the CDN.
+        '--model_dir', whisper_cache_dir(),
+        '--language', 'English',
+        '--output_format', output_format,
+        '-o', out_dir,
+        '--device', 'cpu',
+        '--no_speech_threshold', '0.1',
+    ]
+
+
+def transcribe_in_chunks(job_id, audio_path, output_format, env, chunk_dir):
+    """Transcribe a long recording chunk by chunk. Returns text, or None on error.
+
+    On error the job status has already been written. Every chunk and every
+    per-chunk output is deleted as soon as it has been consumed, so peak disk
+    stays at roughly one chunk regardless of how long the recording is.
+    """
+    write_job_status(job_id, success=True, status='transcribing',
+                     message='Preparing long recording...')
+    chunks = split_audio_into_chunks(audio_path, chunk_dir, CHUNK_SECONDS)
+    if not chunks:
+        write_job_status(
+            job_id, success=False, status='error',
+            error='Could not prepare this recording for transcription. '
+                  'The file may be corrupt or in an unsupported format.')
+        return None
+
+    # The upload itself is no longer needed once it has been split; on a long
+    # recording that is the single largest file on disk.
+    remove_if_exists(audio_path)
+
+    total = len(chunks)
+    pieces = []
+    srt_index = 1
+    for i, chunk_path in enumerate(chunks):
+        write_job_status(
+            job_id, success=True, status='transcribing',
+            message=f'Transcribing part {i + 1} of {total}...')
+        chunk_out = os.path.splitext(chunk_path)[0] + f'.{output_format}'
+        try:
+            result = subprocess.run(
+                build_whisper_cmd(chunk_path, chunk_dir, output_format),
+                capture_output=True, text=True,
+                timeout=whisper_timeout(), env=env)
+            if not os.path.exists(chunk_out):
+                print(f"Whisper failed on chunk {i + 1}/{total} for {job_id} "
+                      f"rc={result.returncode}: {result.stderr[:400]}")
+                write_job_status(
+                    job_id, success=False, status='error',
+                    error=f'Transcription failed partway through '
+                          f'(part {i + 1} of {total}). Please try again.')
+                return None
+            with open(chunk_out, 'r') as f:
+                piece = strip_ansi(f.read()).strip()
+        finally:
+            # Immediately, whether this chunk succeeded or not.
+            remove_if_exists(chunk_path)
+            remove_if_exists(chunk_out)
+
+        if not piece:
+            continue
+        if output_format == 'srt':
+            piece, srt_index = shift_srt(piece, i * CHUNK_SECONDS, srt_index)
+        pieces.append(piece)
+
+    separator = '\n\n' if output_format == 'srt' else '\n'
+    return separator.join(pieces).strip()
+
 
 def run_transcription_job(job_id, audio_path, url, format_type):
     output_format = 'srt' if format_type == 'srt' else 'txt'
@@ -438,6 +673,9 @@ def run_transcription_job(job_id, audio_path, url, format_type):
         # below and lives in the shared, protected .cache/whisper.
         job_scratch = os.path.join(app.config['UPLOAD_FOLDER'], f'{job_id}.cache')
         os.makedirs(job_scratch, exist_ok=True)
+        # Where split chunks live if this recording needs them. Named with the
+        # job id so purge_job_artifacts sweeps it like everything else.
+        chunk_dir = os.path.join(app.config['UPLOAD_FOLDER'], f'{job_id}.chunks')
 
         env = os.environ.copy()
         env['XDG_CACHE_HOME'] = job_scratch
@@ -446,43 +684,43 @@ def run_transcription_job(job_id, audio_path, url, format_type):
         if ca_bundle:
             env['SSL_CERT_FILE'] = ca_bundle
             env['REQUESTS_CA_BUNDLE'] = ca_bundle
-        whisper_cmd = [
-            'python3', '-m', 'whisper',
-            audio_path,
-            '--model', WHISPER_MODEL,
-            # Explicit, so the disposable XDG_CACHE_HOME above can never send
-            # whisper hunting for the model -- or re-downloading it, which fails
-            # on a box whose cert chain cannot verify the CDN.
-            '--model_dir', whisper_cache_dir(),
-            '--language', 'English',
-            '--output_format', output_format,
-            '-o', app.config['UPLOAD_FOLDER'],
-            '--device', 'cpu',
-            '--no_speech_threshold', '0.1'
-        ]
+        # Long recordings are split and transcribed a chunk at a time so peak
+        # memory tracks CHUNK_SECONDS instead of the length of the recording.
+        # Short ones take the original single-pass path, unchanged.
+        duration = probe_duration_seconds(audio_path)
+        if duration is not None and duration > CHUNK_THRESHOLD_SECONDS:
+            print(f"Job {job_id}: {duration / 60:.1f} min recording -> chunked "
+                  f"at {CHUNK_SECONDS}s")
+            text = transcribe_in_chunks(
+                job_id, audio_path, output_format, env, chunk_dir)
+            if text is None:
+                return  # status already written by the chunked path
+        else:
+            whisper_cmd = build_whisper_cmd(
+                audio_path, app.config['UPLOAD_FOLDER'], output_format)
 
-        result = subprocess.run(
-            whisper_cmd,
-            capture_output=True,
-            text=True,
-            timeout=whisper_timeout(),
-            env=env
-        )
-
-        if not os.path.exists(output_path):
-            print(f"Whisper failed for {job_id} - Return code: {result.returncode}")
-            print(f"Stdout: {result.stdout[:500]}")
-            print(f"Stderr: {result.stderr[:500]}")
-            write_job_status(
-                job_id,
-                success=False,
-                status='error',
-                error='Transcription failed. Please try a shorter file or a different recording.'
+            result = subprocess.run(
+                whisper_cmd,
+                capture_output=True,
+                text=True,
+                timeout=whisper_timeout(),
+                env=env
             )
-            return
 
-        with open(output_path, 'r') as f:
-            text = strip_ansi(f.read()).strip()
+            if not os.path.exists(output_path):
+                print(f"Whisper failed for {job_id} - Return code: {result.returncode}")
+                print(f"Stdout: {result.stdout[:500]}")
+                print(f"Stderr: {result.stderr[:500]}")
+                write_job_status(
+                    job_id,
+                    success=False,
+                    status='error',
+                    error='Transcription failed. Please try a shorter file or a different recording.'
+                )
+                return
+
+            with open(output_path, 'r') as f:
+                text = strip_ansi(f.read()).strip()
 
         # A transcript is text: ~69 minutes of speech is well under 100KB, so
         # anything near the cap means a runaway (a stuck decode loop repeating a
@@ -539,6 +777,10 @@ def run_transcription_job(job_id, audio_path, url, format_type):
         # delivered text. Nothing here is recoverable once the job has ended.
         purge_job_artifacts(job_id, keep_status=True)
         remove_tree_if_exists(os.path.join(app.config['UPLOAD_FOLDER'], f'{job_id}.cache'))
+        remove_tree_if_exists(os.path.join(app.config['UPLOAD_FOLDER'], f'{job_id}.chunks'))
+        # And the model/torch cache, so the only thing this job leaves on disk
+        # is the .json holding the transcript text.
+        purge_model_cache_if_idle(job_id)
 
 def start_job(job_id, audio_path, url, format_type):
     thread = threading.Thread(
