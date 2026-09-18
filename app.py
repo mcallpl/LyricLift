@@ -168,6 +168,16 @@ def read_job_status(job_id):
     with open(job_status_path(job_id), 'r') as f:
         return json.load(f)
 
+def remove_tree_if_exists(path):
+    """Delete a directory and everything under it, ignoring absence."""
+    try:
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"Could not remove directory {path}: {e}")
+
+
 def remove_if_exists(path):
     if path and os.path.exists(path):
         os.remove(path)
@@ -194,6 +204,101 @@ def start_job_heartbeat(job_id, interval=300):
     thread = threading.Thread(target=_beat, daemon=True)
     thread.start()
     return stop
+
+# Everything a job can leave behind except its .json status file, which holds the
+# delivered text and is what the browser reads. Media is the expensive part: a
+# single upload can be hundreds of MB.
+JOB_MEDIA_EXTENSIONS = {'mp3', 'mp4', 'm4a', 'wav', 'mov', 'webm', 'opus', 'ogg', 'flac', 'aac', 'part', 'tmp'}
+JOB_OUTPUT_EXTENSIONS = {'txt', 'srt', 'vtt', 'tsv', 'json.tmp'}
+# A transcript is text; even a multi-hour recording is well under a MB. A status
+# file far past this means something is wrong, and it is not worth keeping.
+MAX_STATUS_BYTES = 2 * 1024 * 1024
+
+
+def purge_job_artifacts(job_id, keep_status=True):
+    """Delete every file this job created, optionally sparing its status .json.
+
+    Called when a job ends (success or failure) so the disk is reclaimed the
+    moment the work is done rather than at the end of the 6h TTL window.
+    """
+    if not is_safe_job_id(job_id):
+        return
+    folder = app.config['UPLOAD_FOLDER']
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    for name in names:
+        if name.startswith('.') or not name.startswith(job_id):
+            continue
+        if keep_status and name == f'{job_id}.json':
+            continue
+        target = os.path.join(folder, name)
+        if os.path.isdir(target):
+            remove_tree_if_exists(target)
+        else:
+            remove_if_exists(target)
+
+
+def reclaim_orphaned_jobs():
+    """Clear debris left by a job that was killed before its finally block ran.
+
+    A gunicorn restart (a deploy!), an OOM kill, or a crash all terminate the
+    worker thread outright, so run_transcription_job's finally never executes
+    and its upload -- potentially hundreds of MB -- is stranded in tmp/ forever.
+    Runs once at import, when by definition no job of ours is in flight.
+
+    Any job still marked queued/transcribing was interrupted by whatever
+    stopped the process. It is rewritten as an explicit error so the browser
+    polling /status gets a truthful answer instead of timing out against a
+    status that will never change again.
+    """
+    folder = app.config['UPLOAD_FOLDER']
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    freed = 0
+    for name in names:
+        if name.startswith('.'):
+            continue
+        path = os.path.join(folder, name)
+        if os.path.isdir(path):
+            # An orphaned per-job cache directory from a killed job.
+            if name.endswith('.cache'):
+                remove_tree_if_exists(path)
+            continue
+        if not os.path.isfile(path):
+            continue
+        ext = name.rsplit('.', 1)[-1].lower() if '.' in name else ''
+        if ext in JOB_MEDIA_EXTENSIONS or ext in JOB_OUTPUT_EXTENSIONS:
+            try:
+                freed += os.path.getsize(path)
+            except OSError:
+                pass
+            remove_if_exists(path)
+    for name in names:
+        if not name.endswith('.json') or name.startswith('.'):
+            continue
+        path = os.path.join(folder, name)
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        if data.get('status') in ('queued', 'downloading', 'transcribing'):
+            job_id = data.get('jobId') or name[:-len('.json')]
+            write_job_status(
+                job_id,
+                success=False,
+                status='error',
+                error='Processing was interrupted because the server restarted. '
+                      'Nothing was lost on your end -- please upload the file again.'
+            )
+            print(f"Marked interrupted job {job_id} as errored on startup.")
+    if freed:
+        print(f"Startup reclaim: freed {freed / (1024 * 1024):.1f}MB of orphaned job media.")
+
 
 def cleanup_old_jobs():
     cutoff = datetime.now(timezone.utc).timestamp() - JOB_TTL_SECONDS
@@ -326,8 +431,16 @@ def run_transcription_job(job_id, audio_path, url, format_type):
             message='Transcribing audio... Long recordings can take a while on this server.'
         )
 
+        # Give this job its own disposable cache directory. Whatever whisper,
+        # torch, numba or tiktoken decide to cache lands in here and is deleted
+        # wholesale when the job ends -- no need to predict their filenames.
+        # The MODEL is deliberately NOT in here: it is passed via --model_dir
+        # below and lives in the shared, protected .cache/whisper.
+        job_scratch = os.path.join(app.config['UPLOAD_FOLDER'], f'{job_id}.cache')
+        os.makedirs(job_scratch, exist_ok=True)
+
         env = os.environ.copy()
-        env['XDG_CACHE_HOME'] = cache_dir
+        env['XDG_CACHE_HOME'] = job_scratch
         # Give the subprocess a good CA bundle instead of disabling verification.
         ca_bundle = _ca_bundle()
         if ca_bundle:
@@ -337,6 +450,10 @@ def run_transcription_job(job_id, audio_path, url, format_type):
             'python3', '-m', 'whisper',
             audio_path,
             '--model', WHISPER_MODEL,
+            # Explicit, so the disposable XDG_CACHE_HOME above can never send
+            # whisper hunting for the model -- or re-downloading it, which fails
+            # on a box whose cert chain cannot verify the CDN.
+            '--model_dir', whisper_cache_dir(),
             '--language', 'English',
             '--output_format', output_format,
             '-o', app.config['UPLOAD_FOLDER'],
@@ -366,6 +483,17 @@ def run_transcription_job(job_id, audio_path, url, format_type):
 
         with open(output_path, 'r') as f:
             text = strip_ansi(f.read()).strip()
+
+        # A transcript is text: ~69 minutes of speech is well under 100KB, so
+        # anything near the cap means a runaway (a stuck decode loop repeating a
+        # phrase). Truncate rather than write a multi-MB status file the browser
+        # then has to poll and parse.
+        if len(text.encode('utf-8')) > MAX_STATUS_BYTES:
+            text = text.encode('utf-8')[:MAX_STATUS_BYTES].decode('utf-8', 'ignore')
+            text += ('\n\n[Transcript truncated at '
+                     f'{MAX_STATUS_BYTES // (1024 * 1024)}MB -- the recording produced '
+                     'far more text than speech of this length should.]')
+            print(f"Job {job_id}: transcript exceeded {MAX_STATUS_BYTES} bytes; truncated.")
 
         if not text:
             write_job_status(
@@ -405,6 +533,12 @@ def run_transcription_job(job_id, audio_path, url, format_type):
         heartbeat_stop.set()
         remove_if_exists(audio_path)
         remove_if_exists(output_path)
+        # Belt and braces: whisper can emit siblings next to the expected output
+        # (a second --output_format, a partial write, a .tmp). Sweep anything
+        # else carrying this job id, keeping only the .json that holds the
+        # delivered text. Nothing here is recoverable once the job has ended.
+        purge_job_artifacts(job_id, keep_status=True)
+        remove_tree_if_exists(os.path.join(app.config['UPLOAD_FOLDER'], f'{job_id}.cache'))
 
 def start_job(job_id, audio_path, url, format_type):
     thread = threading.Thread(
@@ -543,6 +677,13 @@ try:
               "transcription will fail until it is available.")
 except Exception as _e:
     print(f"WARNING: Whisper model preload raised: {_e}")
+
+# Reclaim anything stranded by a previous process that died mid-job (a deploy
+# restart is the common case) before the scheduler's first tick hours from now.
+try:
+    reclaim_orphaned_jobs()
+except Exception as _e:
+    print(f"WARNING: startup job reclaim raised: {_e}")
 
 # Sweep stale job files on a background timer so an idle server still cleans up.
 start_cleanup_scheduler()
