@@ -17,7 +17,13 @@ from ck1pw.door import register_ck1pw
 register_ck1pw(app)
 from ck1pw.gate import register_gate
 register_gate(app)
-MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+# Upload ceiling. Raised from 100MB on 2026-09-17: a 69-minute Zoom
+# "Complete_Audio.m4a" is 123MB and was rejected by nginx with a 413 before the
+# app ever saw it. nginx's client_max_body_size must be raised to match (see
+# lyriclift-flask.conf) -- nginx rejects first, so the Flask limit alone is not
+# enough. Override with LYRICLIFT_MAX_UPLOAD_MB.
+MAX_UPLOAD_MB = int(os.environ.get('LYRICLIFT_MAX_UPLOAD_MB', '1024'))
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 # Long recordings can take hours on the small CPU-only production server.
 # A value of 0 disables the Whisper subprocess timeout.
 PROCESSING_TIMEOUT_SECONDS = int(os.environ.get('LYRICLIFT_PROCESSING_TIMEOUT_SECONDS', '0'))
@@ -294,7 +300,7 @@ def run_transcription_job(job_id, audio_path, url, format_type):
                 job_id,
                 success=False,
                 status='error',
-                error='File too large. Maximum 100MB.'
+                error=f'File too large. Maximum {MAX_UPLOAD_MB}MB.'
             )
             return
 
@@ -457,7 +463,7 @@ def extract():
 
             if os.path.getsize(audio_path) > MAX_UPLOAD_BYTES:
                 remove_if_exists(audio_path)
-                return jsonify({'success': False, 'error': 'File too large. Maximum 100MB.'}), 400
+                return jsonify({'success': False, 'error': f'File too large. Maximum {MAX_UPLOAD_MB}MB.'}), 400
 
             write_job_status(
                 job_id,
@@ -515,7 +521,7 @@ def status(job_id):
 
 @app.errorhandler(413)
 def file_too_large(_error):
-    return jsonify({'success': False, 'error': 'File too large. Maximum 100MB.'}), 413
+    return jsonify({'success': False, 'error': f'File too large. Maximum {MAX_UPLOAD_MB}MB.'}), 413
 
 # Note: there is intentionally no server-side /download route. The transcription
 # text is returned in the /status payload and the browser saves it client-side

@@ -8,10 +8,41 @@ ssh root@64.227.108.128
 ```
 
 ### Step 2: Deploy Files
+
+> **`--delete` WILL DESTROY THE PRE-BAKED WHISPER MODEL. Read this before you run it.**
+>
+> The server holds files that do NOT exist in the local repo. `rsync --delete`
+> removes anything on the server with no local counterpart, so a bare
+> `--delete` silently deletes all of these:
+>
+> | Server-only path | What losing it costs |
+> |---|---|
+> | `.cache/whisper/tiny.pt` (75MB) | The app falls back to downloading the model at request time. **That download fails** on a machine whose cert chain has a self-signed root (`CERTIFICATE_VERIFY_FAILED`) — the exact failure Step 3b exists to prevent. Transcription breaks. |
+> | `youtube_cookies.txt` | YouTube URLs start failing the bot check (HTTP 429). |
+> | `app.py.bak-*` | Server-side rollback points, including `app.py.bak-ck1pw` and `app.py.bak-psgate`. |
+> | `tmp/*.json` | In-flight job status — a running transcription loses its result. |
+>
+> This is the same trap that once deleted the MLSPoppy snapshot log: **a
+> scheduled or server-side file living inside an `rsync --delete` target.**
+
+**First-time deploy to an empty directory** — `--delete` is safe here only
+because there is nothing on the server yet. Keep the excludes anyway, so that
+copying this line into a later redeploy is not destructive:
+
 ```bash
 # From your local machine
-rsync -avz --delete --exclude='tmp/*' /Users/chipmcallister/Projects/LyricLift/ root@64.227.108.128:/var/www/html/LyricLift/
+rsync -avz --delete \
+  --exclude='tmp/*' \
+  --exclude='.cache' \
+  --exclude='youtube_cookies.txt' \
+  --exclude='app.py.bak-*' \
+  --exclude='__pycache__' \
+  --exclude='.git' \
+  /Users/chipmcallister/Projects/LyricLift/ root@64.227.108.128:/var/www/html/LyricLift/
 ```
+
+**Redeploying over a live install — do NOT use `--delete`.** Sync only what
+changed. See "Updating Code" below.
 
 ### Step 3: Install Dependencies
 ```bash
@@ -144,13 +175,55 @@ free -h
 
 ## Updating Code
 
-To push updates:
+To push updates. **No `--delete`** — see the warning in Step 2:
+
 ```bash
-# From local machine
-rsync -avz --exclude='tmp/*' /Users/chipmcallister/Projects/LyricLift/ root@64.227.108.128:/var/www/html/LyricLift/
+# From local machine — safest: name only the files you changed.
+rsync -avz app.py lyriclift-flask.conf README.md \
+  root@64.227.108.128:/var/www/html/LyricLift/
+
+# Or the whole tree, still without --delete:
+rsync -avz --exclude='tmp/*' --exclude='.cache' --exclude='__pycache__' \
+  /Users/chipmcallister/Projects/LyricLift/ root@64.227.108.128:/var/www/html/LyricLift/
+
+# Back up what you are about to overwrite, on the server, first:
+ssh root@64.227.108.128 'cd /var/www/html/LyricLift && cp app.py app.py.bak-$(date +%Y%m%d)'
 
 # On server
 systemctl restart lyriclift
+```
+
+**If the change touches `lyriclift-flask.conf`, nginx needs it separately** —
+rsync only drops it in the app directory; nginx reads it from
+`/etc/nginx/sites-available/`:
+
+```bash
+ssh root@64.227.108.128 'cp /var/www/html/LyricLift/lyriclift-flask.conf /etc/nginx/sites-available/lyriclift \
+  && nginx -t && systemctl reload nginx'
+```
+
+`nginx -t` is not optional: this box serves ~40 other vhosts and a bad config
+takes all of them down on reload. It prints many pre-existing warnings from the
+other sites ("protocol options redefined", "conflicting server name") — those
+are normal. The only line that matters is `test is successful`.
+
+### Upload size limits — change BOTH or neither
+
+Two independent ceilings gate an upload, and **nginx rejects first**, so
+raising the Flask one alone does nothing:
+
+| Where | Setting |
+|---|---|
+| `lyriclift-flask.conf` | `client_max_body_size 1024M;` |
+| `app.py` | `MAX_UPLOAD_MB` (env: `LYRICLIFT_MAX_UPLOAD_MB`, default 1024) |
+
+Keep `client_max_body_size` >= `MAX_UPLOAD_MB` or users get a bare nginx
+`413 Request Entity Too Large` HTML page instead of the app's JSON error.
+
+Verify the live values after any change — read them off the box, don't assume:
+
+```bash
+ssh root@64.227.108.128 'nginx -T 2>/dev/null | awk "/server_name lyriclift/,/^}/" | grep client_max_body_size'
 ```
 
 ## Performance Notes

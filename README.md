@@ -111,7 +111,7 @@ Environment variables (all optional):
 
 Limits (in `app.py`):
 
-- **Max upload size**: 100MB (`MAX_UPLOAD_BYTES`)
+- **Max upload size**: 1024MB (`MAX_UPLOAD_BYTES`, override with `LYRICLIFT_MAX_UPLOAD_MB`)
 - **Job TTL**: 6 hours (`JOB_TTL_SECONDS`)
 
 ### Whisper Command
@@ -127,7 +127,7 @@ XDG_CACHE_HOME=<cache> python3 -m whisper <audio> \
 
 ### Nginx Limits
 
-- **Max upload size**: 100MB (`client_max_body_size 100M`)
+- **Max upload size**: 1024MB (`client_max_body_size 1024M`) — must be >= the Flask limit, nginx rejects first
 - **Proxy timeout**: 600 seconds (`proxy_read_timeout`)
 - **Upstream**: Flask/gunicorn on `127.0.0.1:5000`
 
@@ -167,7 +167,7 @@ The app returns clear JSON errors for common cases:
 - No input → "No URL or file provided"
 - Invalid URL → "Invalid URL"
 - Unsupported file type → "Invalid file type. Supported: MP3, MP4, M4A, WAV, MOV, WEBM"
-- File too large → "File too large. Maximum 100MB."
+- File too large → "File too large. Maximum 1024MB."
 - Download failure → "Failed to download audio…" (mentions the missing JS runtime if that's the cause)
 - No speech → "No speech detected in audio."
 
