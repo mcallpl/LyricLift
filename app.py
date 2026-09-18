@@ -428,7 +428,10 @@ def extract():
         cleanup_old_jobs()
 
         url = request.form.get('url', '').strip()
-        format_type = request.form.get('format', 'srt')
+        # Default is plain text: the radio in index.html defaults to 'txt', and
+        # this fallback matches it so a request that omits the field agrees with
+        # what the UI shows. 'srt' remains fully supported.
+        format_type = request.form.get('format', 'txt')
 
         if format_type not in ['srt', 'txt']:
             return jsonify({'success': False, 'error': 'Invalid format'}), 400
